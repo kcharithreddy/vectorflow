@@ -1,134 +1,207 @@
-"""Qdrant vector database service.
+"""Qdrant vector database service (native async client).
 
-Uses AsyncQdrantClient for native async I/O -- no thread pool, no GIL
-contention, unlimited concurrency bounded only by the network and Qdrant
-server capacity.  Synchronous helpers are kept in a dedicated section at
-the bottom for use in scripts / tests / CLI tools.
+Each chunk is stored as one point.  Point ids are deterministic
+(``uuid5(document_id, chunk_index)``) so re-ingesting a document with the same
+id overwrites its chunks instead of duplicating them.
 """
 
+import asyncio
+import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import lru_cache
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from qdrant_client import QdrantClient, AsyncQdrantClient
+from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models
 from qdrant_client.http.models import (
+    DatetimeRange,
     Distance,
-    VectorParams,
-    PointStruct,
-    Filter,
     FieldCondition,
-    MatchValue,
+    Filter,
     MatchAny,
+    MatchValue,
+    PayloadSchemaType,
+    PointStruct,
+    VectorParams,
 )
-from config import get_settings
+
+from config import Settings, get_settings
+from services.embedding_service import Chunk
+
+logger = logging.getLogger(__name__)
+
+# Payload fields that get an index for fast filtering.
+PAYLOAD_INDEXES = {
+    "document_id": PayloadSchemaType.KEYWORD,
+    "chunk_index": PayloadSchemaType.INTEGER,
+    "created_at": PayloadSchemaType.DATETIME,
+    "metadata.category": PayloadSchemaType.KEYWORD,
+    "metadata.tags": PayloadSchemaType.KEYWORD,
+}
+
+SCROLL_BATCH = 256
+LEGACY_TITLE_PREFIX = "[Document: "
+
+
+def chunk_point_id(document_id: str, chunk_index: int) -> str:
+    return str(uuid.uuid5(uuid.UUID(document_id), str(chunk_index)))
+
+
+def clean_chunk_text(text: str) -> str:
+    """Strip the title prefix that older versions stored inside the chunk text."""
+    if text.startswith(LEGACY_TITLE_PREFIX):
+        newline = text.find("\n")
+        if newline != -1:
+            return text[newline + 1:]
+    return text
+
+
+def document_filter(document_id: str) -> Filter:
+    return Filter(must=[FieldCondition(key="document_id", match=MatchValue(value=document_id))])
 
 
 class QdrantService:
-    """Service for interacting with Qdrant vector database.
+    """Service for interacting with the Qdrant vector database."""
 
-    Primary interface is the set of ``*_async`` methods which use the native
-    ``AsyncQdrantClient``.  A synchronous ``client`` is kept for startup
-    housekeeping (_ensure_collection) and is available via the ``sync_*``
-    section for scripts / tests that run outside an event loop.
-    """
-
-    VECTOR_SIZE = 1536  # OpenAI ada-002 embedding size
-
-    def __init__(self):
-        settings = get_settings()
-        self.async_client = AsyncQdrantClient(
+    def __init__(self, settings: Optional[Settings] = None, client: Optional[AsyncQdrantClient] = None):
+        settings = settings or get_settings()
+        self.client = client or AsyncQdrantClient(
             host=settings.qdrant_host,
             port=settings.qdrant_port,
-        )
-        self._sync_client = QdrantClient(
-            host=settings.qdrant_host,
-            port=settings.qdrant_port,
+            api_key=settings.qdrant_api_key or None,
+            https=False,
         )
         self.collection_name = settings.qdrant_collection
-        self._ensure_collection()
-
-    def _ensure_collection(self):
-        """Create collection if it doesn't exist (runs at startup, sync is fine)."""
-        collections = self._sync_client.get_collections().collections
-        exists = any(c.name == self.collection_name for c in collections)
-
-        if not exists:
-            self._sync_client.create_collection(
-                collection_name=self.collection_name,
-                vectors_config=VectorParams(
-                    size=self.VECTOR_SIZE,
-                    distance=Distance.COSINE,
-                ),
-            )
-            print(f"Created Qdrant collection: {self.collection_name}")
+        self.vector_size = settings.embedding_dimensions
+        self._ready = False
+        self._ready_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
-    # Async API  (primary -- used by FastAPI routers)
+    # Collection bootstrap
+    # ------------------------------------------------------------------
+
+    async def ensure_collection(self) -> None:
+        """Create the collection and payload indexes if needed (idempotent)."""
+        if self._ready:
+            return
+        async with self._ready_lock:
+            if self._ready:
+                return
+            if not await self.client.collection_exists(self.collection_name):
+                await self.client.create_collection(
+                    collection_name=self.collection_name,
+                    vectors_config=VectorParams(size=self.vector_size, distance=Distance.COSINE),
+                )
+                logger.info("Created Qdrant collection '%s' (dim=%d)", self.collection_name, self.vector_size)
+            else:
+                info = await self.client.get_collection(self.collection_name)
+                existing = self._configured_vector_size(info)
+                if existing is not None and existing != self.vector_size:
+                    raise RuntimeError(
+                        f"Qdrant collection '{self.collection_name}' has vector size {existing}, "
+                        f"but EMBEDDING_DIMENSIONS is {self.vector_size}. Use a new collection "
+                        f"name (QDRANT_COLLECTION) or re-create the collection."
+                    )
+
+            for field, schema in PAYLOAD_INDEXES.items():
+                try:
+                    await self.client.create_payload_index(
+                        collection_name=self.collection_name,
+                        field_name=field,
+                        field_schema=schema,
+                    )
+                except Exception:  # index already exists / unsupported - not fatal
+                    logger.debug("Payload index for '%s' not created", field, exc_info=True)
+            self._ready = True
+
+    @staticmethod
+    def _configured_vector_size(info) -> Optional[int]:
+        try:
+            vectors = info.config.params.vectors
+            return vectors.size if hasattr(vectors, "size") else None
+        except AttributeError:
+            return None
+
+    # ------------------------------------------------------------------
+    # Writes
     # ------------------------------------------------------------------
 
     async def upsert_chunks_async(
         self,
         document_id: str,
         title: str,
-        chunks: List[str],
+        chunks: Sequence[Chunk],
         embeddings: List[List[float]],
-        metadata: Dict[str, Any] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> int:
-        """Insert document chunks with their embeddings."""
-        points = self._build_points(document_id, title, chunks, embeddings, metadata)
+        """Insert (or replace) all chunks of a document."""
+        if len(chunks) != len(embeddings):
+            raise ValueError("chunks and embeddings must have the same length")
+        await self.ensure_collection()
 
-        await self.async_client.upsert(
+        points = self.build_points(document_id, title, chunks, embeddings, metadata)
+        await self.client.upsert(collection_name=self.collection_name, points=points, wait=True)
+
+        # Remove chunks left over from a previous, longer version of the document.
+        await self.client.delete(
             collection_name=self.collection_name,
-            points=points,
+            points_selector=models.FilterSelector(
+                filter=Filter(
+                    must=[
+                        FieldCondition(key="document_id", match=MatchValue(value=document_id)),
+                        FieldCondition(key="chunk_index", range=models.Range(gte=len(chunks))),
+                    ]
+                )
+            ),
         )
         return len(points)
+
+    async def delete_by_document_id_async(self, document_id: str) -> int:
+        """Delete all chunks for a document. Returns the number of chunks removed."""
+        await self.ensure_collection()
+        flt = document_filter(document_id)
+        count = (await self.client.count(self.collection_name, count_filter=flt, exact=True)).count
+        if count:
+            await self.client.delete(
+                collection_name=self.collection_name,
+                points_selector=models.FilterSelector(filter=flt),
+                wait=True,
+            )
+        return count
+
+    # ------------------------------------------------------------------
+    # Reads
+    # ------------------------------------------------------------------
 
     async def search_async(
         self,
         query_embedding: List[float],
         limit: int = 5,
         filters: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
+        min_score: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
-        """Search for similar vectors."""
-        search_filter = self._build_search_filter(filters)
-
-        results = await self.async_client.search(
+        """Return the chunks most similar to ``query_embedding``."""
+        await self.ensure_collection()
+        response = await self.client.query_points(
             collection_name=self.collection_name,
-            query_vector=query_embedding,
+            query=query_embedding,
             limit=limit,
-            query_filter=search_filter,
+            query_filter=self.build_search_filter(filters),
+            score_threshold=min_score,
             with_payload=True,
         )
-        return self._format_search_results(results)
-
-    async def delete_by_document_id_async(self, document_id: str) -> bool:
-        """Delete all chunks for a document."""
-        await self.async_client.delete(
-            collection_name=self.collection_name,
-            points_selector=models.FilterSelector(
-                filter=Filter(
-                    must=[
-                        FieldCondition(
-                            key="document_id",
-                            match=MatchValue(value=document_id),
-                        )
-                    ]
-                )
-            ),
-        )
-        return True
+        return self.format_search_results(response.points)
 
     async def get_collection_info_async(self) -> Dict[str, Any]:
-        """Get collection statistics."""
-        info = await self.async_client.get_collection(self.collection_name)
+        await self.ensure_collection()
+        info = await self.client.get_collection(self.collection_name)
         return {
             "name": self.collection_name,
-            "vectors_count": info.vectors_count,
             "points_count": info.points_count,
-            "status": info.status.value,
+            "indexed_vectors_count": info.indexed_vectors_count,
+            "status": info.status.value if hasattr(info.status, "value") else str(info.status),
+            "vector_size": self._configured_vector_size(info),
         }
 
     async def list_all_documents_async(
@@ -136,120 +209,136 @@ class QdrantService:
         page: int = 1,
         page_size: int = 20,
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """Paginated list of unique documents.
+        """Paginated list of documents.
 
-        Scrolls only enough batches to fill the requested page instead of
-        loading the entire collection into memory.
+        Each document is represented by its first chunk (``chunk_index == 0``),
+        so paging and the total count are exact and never require loading
+        every chunk into memory.
         """
-        documents: Dict[str, Dict[str, Any]] = {}
-        offset = None
-        skip = (page - 1) * page_size
+        await self.ensure_collection()
+        first_chunks = Filter(must=[FieldCondition(key="chunk_index", match=MatchValue(value=0))])
+        total = (await self.client.count(self.collection_name, count_filter=first_chunks, exact=True)).count
 
-        while True:
-            results, offset = await self.async_client.scroll(
+        skip = (page - 1) * page_size
+        if skip >= total:
+            return [], total
+
+        needed = skip + page_size
+        collected: List[Any] = []
+        offset = None
+        while len(collected) < needed:
+            results, offset = await self.client.scroll(
                 collection_name=self.collection_name,
-                limit=100,
+                scroll_filter=first_chunks,
+                limit=min(SCROLL_BATCH, needed - len(collected)),
                 offset=offset,
-                with_payload=["document_id", "title", "created_at", "metadata"],
+                with_payload=["document_id", "title", "created_at", "metadata", "total_chunks"],
                 with_vectors=False,
             )
-
-            if not results:
+            collected.extend(results)
+            if offset is None or not results:
                 break
+        points = collected[skip:needed]
 
-            for point in results:
-                doc_id = point.payload.get("document_id", "")
-                if not doc_id:
-                    continue
-                if doc_id not in documents:
-                    documents[doc_id] = {
-                        "document_id": doc_id,
-                        "title": point.payload.get("title", ""),
-                        "created_at": point.payload.get("created_at", ""),
-                        "metadata": point.payload.get("metadata", {}),
-                        "chunk_count": 0,
-                    }
-                documents[doc_id]["chunk_count"] += 1
+        async def chunk_count(point) -> int:
+            stored = point.payload.get("total_chunks")
+            if isinstance(stored, int):
+                return stored
+            # Documents ingested by older versions don't store total_chunks.
+            doc_id = point.payload.get("document_id", "")
+            return (await self.client.count(
+                self.collection_name, count_filter=document_filter(doc_id), exact=True
+            )).count
 
-            if offset is None:
-                break
-
-            collected = len(documents)
-            if collected >= skip + page_size:
-                break
-
-        all_docs = list(documents.values())
-        total_count = len(all_docs)
-        return all_docs[skip : skip + page_size], total_count
+        counts = await asyncio.gather(*(chunk_count(p) for p in points))
+        documents = [
+            {
+                "document_id": p.payload.get("document_id", ""),
+                "title": p.payload.get("title", ""),
+                "created_at": p.payload.get("created_at", ""),
+                "metadata": p.payload.get("metadata") or {},
+                "chunk_count": n,
+            }
+            for p, n in zip(points, counts)
+        ]
+        return documents, total
 
     async def get_document_chunks_async(self, document_id: str) -> List[Dict[str, Any]]:
-        """Get all chunks for a specific document."""
-        results, _ = await self.async_client.scroll(
-            collection_name=self.collection_name,
-            scroll_filter=Filter(
-                must=[
-                    FieldCondition(
-                        key="document_id",
-                        match=MatchValue(value=document_id),
-                    )
-                ]
-            ),
-            limit=100,
-            with_payload=True,
-            with_vectors=False,
-        )
-
-        chunks = [
-            {
-                "chunk_id": str(point.id),
-                "chunk_index": point.payload.get("chunk_index", 0),
-                "text": point.payload.get("text", ""),
-                "title": point.payload.get("title", ""),
-                "created_at": point.payload.get("created_at", ""),
-                "metadata": point.payload.get("metadata", {}),
-            }
-            for point in results
-        ]
-        chunks.sort(key=lambda x: x["chunk_index"])
+        """Get every chunk of a document, ordered by chunk index."""
+        await self.ensure_collection()
+        flt = document_filter(document_id)
+        chunks: List[Dict[str, Any]] = []
+        offset = None
+        while True:
+            results, offset = await self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=flt,
+                limit=SCROLL_BATCH,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for point in results:
+                chunks.append({
+                    "chunk_id": str(point.id),
+                    "chunk_index": point.payload.get("chunk_index", 0),
+                    "text": clean_chunk_text(point.payload.get("text", "")),
+                    "title": point.payload.get("title", ""),
+                    "created_at": point.payload.get("created_at", ""),
+                    "metadata": point.payload.get("metadata") or {},
+                })
+            if offset is None:
+                break
+        chunks.sort(key=lambda c: c["chunk_index"])
         return chunks
 
     async def health_check_async(self) -> bool:
-        """Check if Qdrant is reachable."""
         try:
-            await self.async_client.get_collections()
+            await self.client.get_collections()
             return True
         except Exception:
             return False
 
+    async def close(self) -> None:
+        try:
+            await self.client.close()
+        except Exception:
+            logger.debug("Error closing Qdrant client", exc_info=True)
+
     # ------------------------------------------------------------------
-    # Shared helpers  (pure logic, no I/O)
+    # Pure helpers
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _build_points(
+    def build_points(
         document_id: str,
         title: str,
-        chunks: List[str],
+        chunks: Sequence[Chunk],
         embeddings: List[List[float]],
-        metadata: Dict[str, Any] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> List[PointStruct]:
-        """Build Qdrant PointStruct list from chunks and embeddings."""
-        points = []
-        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
-            point_id = str(uuid.uuid4())
-            payload = {
-                "text": chunk,
-                "document_id": document_id,
-                "title": title,
-                "chunk_index": i,
-                "created_at": datetime.utcnow().isoformat(),
-                "metadata": metadata or {},
-            }
-            points.append(PointStruct(id=point_id, vector=embedding, payload=payload))
-        return points
+        created_at = datetime.now(timezone.utc).isoformat()
+        total = len(chunks)
+        return [
+            PointStruct(
+                id=chunk_point_id(document_id, i),
+                vector=embedding,
+                payload={
+                    "text": chunk.text,
+                    "document_id": document_id,
+                    "title": title,
+                    "chunk_index": i,
+                    "total_chunks": total,
+                    "token_count": chunk.token_count,
+                    "created_at": created_at,
+                    "metadata": metadata or {},
+                },
+            )
+            for i, (chunk, embedding) in enumerate(zip(chunks, embeddings))
+        ]
 
     @staticmethod
-    def _build_search_filter(filters: Optional[Dict[str, Any]]) -> Optional[Filter]:
+    def build_search_filter(filters: Optional[Dict[str, Any]]) -> Optional[Filter]:
         """Translate a user-facing filter dict into a Qdrant Filter."""
         if not filters:
             return None
@@ -257,138 +346,36 @@ class QdrantService:
         conditions = []
         if filters.get("category"):
             conditions.append(
-                FieldCondition(
-                    key="metadata.category",
-                    match=MatchValue(value=filters["category"]),
-                )
+                FieldCondition(key="metadata.category", match=MatchValue(value=filters["category"]))
             )
         if filters.get("tags"):
+            conditions.append(FieldCondition(key="metadata.tags", match=MatchAny(any=list(filters["tags"]))))
+        if filters.get("date_from") or filters.get("date_to"):
             conditions.append(
                 FieldCondition(
-                    key="metadata.tags",
-                    match=MatchAny(any=filters["tags"]),
+                    key="created_at",
+                    range=DatetimeRange(gte=filters.get("date_from"), lte=filters.get("date_to")),
                 )
             )
         return Filter(must=conditions) if conditions else None
 
     @staticmethod
-    def _format_search_results(results) -> List[Dict[str, Any]]:
-        """Convert Qdrant ScoredPoint objects to plain dicts."""
+    def format_search_results(points) -> List[Dict[str, Any]]:
         return [
             {
-                "id": str(r.id),
-                "score": r.score,
-                "document_id": r.payload.get("document_id", ""),
-                "title": r.payload.get("title", ""),
-                "text": r.payload.get("text", ""),
-                "chunk_index": r.payload.get("chunk_index", 0),
-                "metadata": r.payload.get("metadata", {}),
+                "id": str(p.id),
+                "score": float(p.score),
+                "document_id": p.payload.get("document_id", ""),
+                "title": p.payload.get("title", ""),
+                "text": clean_chunk_text(p.payload.get("text", "")),
+                "chunk_index": p.payload.get("chunk_index", 0),
+                "metadata": p.payload.get("metadata") or {},
             }
-            for r in results
+            for p in points
         ]
-
-    # ------------------------------------------------------------------
-    # Synchronous API  (for scripts, tests, CLI -- NOT used by routers)
-    # ------------------------------------------------------------------
-
-    def upsert_chunks(
-        self,
-        document_id: str,
-        title: str,
-        chunks: List[str],
-        embeddings: List[List[float]],
-        metadata: Dict[str, Any] = None,
-    ) -> int:
-        """Synchronous version of upsert_chunks_async."""
-        points = self._build_points(document_id, title, chunks, embeddings, metadata)
-        self._sync_client.upsert(collection_name=self.collection_name, points=points)
-        return len(points)
-
-    def search(
-        self,
-        query_embedding: List[float],
-        limit: int = 5,
-        filters: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        """Synchronous version of search_async."""
-        search_filter = self._build_search_filter(filters)
-        results = self._sync_client.search(
-            collection_name=self.collection_name,
-            query_vector=query_embedding,
-            limit=limit,
-            query_filter=search_filter,
-            with_payload=True,
-        )
-        return self._format_search_results(results)
-
-    def delete_by_document_id(self, document_id: str) -> bool:
-        """Synchronous version of delete_by_document_id_async."""
-        self._sync_client.delete(
-            collection_name=self.collection_name,
-            points_selector=models.FilterSelector(
-                filter=Filter(
-                    must=[
-                        FieldCondition(
-                            key="document_id",
-                            match=MatchValue(value=document_id),
-                        )
-                    ]
-                )
-            ),
-        )
-        return True
-
-    def get_collection_info(self) -> Dict[str, Any]:
-        """Synchronous version of get_collection_info_async."""
-        info = self._sync_client.get_collection(self.collection_name)
-        return {
-            "name": self.collection_name,
-            "vectors_count": info.vectors_count,
-            "points_count": info.points_count,
-            "status": info.status.value,
-        }
-
-    def get_document_chunks(self, document_id: str) -> List[Dict[str, Any]]:
-        """Synchronous version of get_document_chunks_async."""
-        results, _ = self._sync_client.scroll(
-            collection_name=self.collection_name,
-            scroll_filter=Filter(
-                must=[
-                    FieldCondition(
-                        key="document_id",
-                        match=MatchValue(value=document_id),
-                    )
-                ]
-            ),
-            limit=100,
-            with_payload=True,
-            with_vectors=False,
-        )
-        chunks = [
-            {
-                "chunk_id": str(point.id),
-                "chunk_index": point.payload.get("chunk_index", 0),
-                "text": point.payload.get("text", ""),
-                "title": point.payload.get("title", ""),
-                "created_at": point.payload.get("created_at", ""),
-                "metadata": point.payload.get("metadata", {}),
-            }
-            for point in results
-        ]
-        chunks.sort(key=lambda x: x["chunk_index"])
-        return chunks
-
-    def health_check(self) -> bool:
-        """Synchronous version of health_check_async."""
-        try:
-            self._sync_client.get_collections()
-            return True
-        except Exception:
-            return False
 
 
 @lru_cache()
 def get_qdrant_service() -> QdrantService:
-    """Get or create Qdrant service singleton (thread-safe via lru_cache)."""
+    """Get or create the Qdrant service singleton."""
     return QdrantService()

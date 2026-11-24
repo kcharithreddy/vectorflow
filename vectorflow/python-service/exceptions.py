@@ -2,6 +2,8 @@
 
 import logging
 
+import openai
+
 logger = logging.getLogger(__name__)
 
 
@@ -54,3 +56,36 @@ class InvalidRequestError(VectorFlowError):
 
     def __init__(self, message: str = "Invalid request"):
         super().__init__(message, status_code=400)
+
+
+class UpstreamServiceError(VectorFlowError):
+    """Raised when a dependency (OpenAI, Qdrant) is unavailable or misconfigured."""
+
+    def __init__(self, message: str, status_code: int = 502):
+        super().__init__(message, status_code=status_code)
+
+
+def translate_openai_error(exc: Exception) -> VectorFlowError | None:
+    """Map OpenAI SDK exceptions to client-meaningful errors (or None if not OpenAI)."""
+    if isinstance(exc, openai.AuthenticationError):
+        return UpstreamServiceError(
+            "OpenAI authentication failed - check OPENAI_API_KEY", status_code=502
+        )
+    if isinstance(exc, openai.RateLimitError):
+        return UpstreamServiceError(
+            "OpenAI rate limit or quota exceeded - try again later", status_code=503
+        )
+    if isinstance(exc, (openai.APIConnectionError, openai.APITimeoutError)):
+        return UpstreamServiceError("Could not reach OpenAI - try again later", status_code=503)
+    if isinstance(exc, openai.BadRequestError):
+        return UpstreamServiceError("OpenAI rejected the request", status_code=502)
+    if isinstance(exc, openai.APIError):
+        return UpstreamServiceError("OpenAI request failed", status_code=502)
+    return None
+
+
+def to_vectorflow_error(exc: Exception, fallback: VectorFlowError) -> VectorFlowError:
+    """Return ``exc`` if already a VectorFlowError, a translated upstream error, or ``fallback``."""
+    if isinstance(exc, VectorFlowError):
+        return exc
+    return translate_openai_error(exc) or fallback

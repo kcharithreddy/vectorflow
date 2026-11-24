@@ -14,6 +14,11 @@
       "key": "token",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "internalApiKey",
+      "value": "change-me-internal-api-key",
+      "type": "string"
     }
   ],
   "auth": {
@@ -49,11 +54,27 @@
             },
             "url": {
               "raw": "{{baseUrl}}/graphql",
-              "host": ["{{baseUrl}}"],
-              "path": ["graphql"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
             }
           },
-          "response": []
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.data && res.data.register) { pm.collectionVariables.set('token', res.data.register.token); }"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Login",
@@ -61,13 +82,11 @@
             {
               "listen": "test",
               "script": {
+                "type": "text/javascript",
                 "exec": [
-                  "var jsonData = pm.response.json();",
-                  "if (jsonData.data && jsonData.data.login) {",
-                  "    pm.collectionVariables.set('token', jsonData.data.login.token);",
-                  "}"
-                ],
-                "type": "text/javascript"
+                  "const res = pm.response.json();",
+                  "if (res.data && res.data.login) { pm.collectionVariables.set('token', res.data.login.token); }"
+                ]
               }
             }
           ],
@@ -83,13 +102,17 @@
               "mode": "graphql",
               "graphql": {
                 "query": "mutation Login($input: LoginInput!) {\n  login(input: $input) {\n    token\n    user {\n      id\n      email\n      createdAt\n    }\n  }\n}",
-                "variables": "{\n  \"input\": {\n    \"email\": \"test@vectorflow.dev\",\n    \"password\": \"password123\"\n  }\n}"
+                "variables": "{\n  \"input\": {\n    \"email\": \"editor@vectorflow.dev\",\n    \"password\": \"editor123\"\n  }\n}"
               }
             },
             "url": {
               "raw": "{{baseUrl}}/graphql",
-              "host": ["{{baseUrl}}"],
-              "path": ["graphql"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
             }
           },
           "response": []
@@ -113,8 +136,12 @@
             },
             "url": {
               "raw": "{{baseUrl}}/graphql",
-              "host": ["{{baseUrl}}"],
-              "path": ["graphql"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
             }
           },
           "response": []
@@ -138,13 +165,17 @@
               "mode": "graphql",
               "graphql": {
                 "query": "mutation Ingest($input: IngestInput!) {\n  ingest(input: $input) {\n    documentId\n    title\n    chunkCount\n    status\n    message\n  }\n}",
-                "variables": "{\n  \"input\": {\n    \"title\": \"Qdrant Vector Database Basics\",\n    \"content\": \"Qdrant is a vector similarity search engine and vector database. It provides a production-ready service with a convenient API to store, search, and manage points—vectors with an additional payload. A collection is a named set of points among which you can search. All vectors within a collection must have the same dimensionality. Points are the central entity in Qdrant, consisting of an ID, vector, and optional payload. Payloads are arbitrary JSON objects attached to points for metadata and filtering. Vector similarity search finds the most similar vectors to a query vector using distance metrics like Cosine, Euclidean, or Dot Product.\",\n    \"metadata\": {\n      \"category\": \"database\",\n      \"tags\": [\"vector\", \"search\", \"qdrant\"]\n    }\n  }\n}"
+                "variables": "{\n  \"input\": {\n    \"title\": \"Qdrant Vector Database Basics\",\n    \"content\": \"Qdrant is a vector similarity search engine and vector database. It provides a production-ready service with a convenient API to store, search, and manage points\u2014vectors with an additional payload. A collection is a named set of points among which you can search. All vectors within a collection must have the same dimensionality. Points are the central entity in Qdrant, consisting of an ID, vector, and optional payload. Payloads are arbitrary JSON objects attached to points for metadata and filtering. Vector similarity search finds the most similar vectors to a query vector using distance metrics like Cosine, Euclidean, or Dot Product.\",\n    \"metadata\": {\n      \"category\": \"database\",\n      \"tags\": [\"vector\", \"search\", \"qdrant\"]\n    }\n  }\n}"
               }
             },
             "url": {
               "raw": "{{baseUrl}}/graphql",
-              "host": ["{{baseUrl}}"],
-              "path": ["graphql"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
             }
           },
           "response": []
@@ -168,8 +199,12 @@
             },
             "url": {
               "raw": "{{baseUrl}}/graphql",
-              "host": ["{{baseUrl}}"],
-              "path": ["graphql"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
             }
           },
           "response": []
@@ -193,8 +228,12 @@
             },
             "url": {
               "raw": "{{baseUrl}}/graphql",
-              "host": ["{{baseUrl}}"],
-              "path": ["graphql"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
             }
           },
           "response": []
@@ -218,8 +257,12 @@
             },
             "url": {
               "raw": "{{baseUrl}}/graphql",
-              "host": ["{{baseUrl}}"],
-              "path": ["graphql"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
             }
           },
           "response": []
@@ -248,8 +291,12 @@
             },
             "url": {
               "raw": "{{baseUrl}}/graphql",
-              "host": ["{{baseUrl}}"],
-              "path": ["graphql"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
             }
           },
           "response": []
@@ -273,8 +320,12 @@
             },
             "url": {
               "raw": "{{baseUrl}}/graphql",
-              "host": ["{{baseUrl}}"],
-              "path": ["graphql"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
             }
           },
           "response": []
@@ -298,8 +349,41 @@
             },
             "url": {
               "raw": "{{baseUrl}}/graphql",
-              "host": ["{{baseUrl}}"],
-              "path": ["graphql"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List Documents",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "query Documents($page: Int, $pageSize: Int, $mine: Boolean) {\n  documents(page: $page, pageSize: $pageSize, mine: $mine) {\n    totalCount\n    hasNext\n    items { id title status chunkCount ownerEmail createdAt metadata { category tags } }\n  }\n}",
+                "variables": "{\n  \"page\": 1,\n  \"pageSize\": 20,\n  \"mine\": false\n}"
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/graphql",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
             }
           },
           "response": []
@@ -328,8 +412,12 @@
             },
             "url": {
               "raw": "{{baseUrl}}/graphql",
-              "host": ["{{baseUrl}}"],
-              "path": ["graphql"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
             }
           },
           "response": []
@@ -353,8 +441,12 @@
             },
             "url": {
               "raw": "{{baseUrl}}/graphql",
-              "host": ["{{baseUrl}}"],
-              "path": ["graphql"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
             }
           },
           "response": []
@@ -378,8 +470,12 @@
             },
             "url": {
               "raw": "{{baseUrl}}/graphql",
-              "host": ["{{baseUrl}}"],
-              "path": ["graphql"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
             }
           },
           "response": []
@@ -403,8 +499,12 @@
             },
             "url": {
               "raw": "{{baseUrl}}/graphql",
-              "host": ["{{baseUrl}}"],
-              "path": ["graphql"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "graphql"
+              ]
             }
           },
           "response": []
@@ -422,9 +522,13 @@
             "url": {
               "raw": "http://localhost:8000/health",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8000",
-              "path": ["health"]
+              "path": [
+                "health"
+              ]
             }
           },
           "response": []
@@ -433,13 +537,25 @@
           "name": "Collection Info",
           "request": {
             "method": "GET",
-            "header": [],
+            "header": [
+              {
+                "key": "X-Internal-API-Key",
+                "value": "{{internalApiKey}}",
+                "type": "text"
+              }
+            ],
             "url": {
               "raw": "http://localhost:8000/api/collection/info",
               "protocol": "http",
-              "host": ["localhost"],
+              "host": [
+                "localhost"
+              ],
               "port": "8000",
-              "path": ["api", "collection", "info"]
+              "path": [
+                "api",
+                "collection",
+                "info"
+              ]
             }
           },
           "response": []
@@ -448,4 +564,3 @@
     }
   ]
 }
-

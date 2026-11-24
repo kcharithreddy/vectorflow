@@ -7,25 +7,31 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Contract for vector search operations delegated to the AI/ML backend.
- * Implementations may call a remote service (e.g. PythonServiceClient)
+ * Contract for vector operations delegated to the AI/ML backend.
+ * Implementations may call a remote service (e.g. {@link PythonServiceClient})
  * or be stubbed for testing.
+ *
+ * <p>DTO component names are snake_case because they mirror the Python
+ * service's JSON exactly.
  */
 public interface VectorSearchService {
 
-    IngestResult ingest(String title, String content, Metadata metadata);
+    /** Ingest a document under a caller-chosen id (so Postgres and Qdrant ids always match). */
+    IngestResult ingest(String documentId, String title, String content, Metadata metadata);
 
     BulkIngestResult bulkIngest(List<BulkIngestDocument> documents);
 
-    SearchResponse search(String query, Integer limit, Map<String, Object> filters);
+    SearchResponse search(String query, int limit, Map<String, Object> filters, Double minScore);
 
-    AskResult ask(String question, Integer maxSources);
+    AskResult ask(String question, int maxSources, Map<String, Object> filters);
 
-    DeleteResult deleteDocument(String documentId);
+    /** @return true if the document existed in the vector store and was deleted, false if it was not found */
+    boolean deleteDocument(String documentId);
 
     boolean healthCheck();
 
-    // Response DTOs shared across implementations
+    // ---- DTOs shared across implementations ----
+
     record IngestResult(
             String document_id,
             String title,
@@ -63,11 +69,8 @@ public interface VectorSearchService {
             Double relevance
     ) implements Serializable {}
 
-    record DeleteResult(
-            String message
-    ) implements Serializable {}
-
     record BulkIngestDocument(
+            String document_id,
             String title,
             String content,
             Map<String, Object> metadata

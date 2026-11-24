@@ -1,18 +1,21 @@
 package com.vectorflow.graphql;
 
+import com.vectorflow.graphql.GraphQlTypes.*;
+import com.vectorflow.exception.GatewayException;
+import com.vectorflow.model.Document;
 import com.vectorflow.model.User;
 import com.vectorflow.security.GraphQlAuthGuard;
+import com.vectorflow.service.DocumentService;
+import com.vectorflow.service.InputValidator;
 import com.vectorflow.service.VectorSearchService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
 import org.springframework.graphql.data.method.annotation.Argument;
 import org.springframework.graphql.data.method.annotation.QueryMapping;
 import org.springframework.stereotype.Controller;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
 
 @Controller
 @RequiredArgsConstructor
@@ -20,110 +23,77 @@ import java.util.stream.Collectors;
 public class QueryResolver {
 
     private final VectorSearchService vectorSearchService;
+    private final DocumentService documentService;
     private final GraphQlAuthGuard authGuard;
 
-    /**
-     * Search for documents using vector similarity.
-     */
+    /** Semantic search over all ingested documents. */
     @QueryMapping
     public SearchResponse search(
             @Argument String query,
             @Argument Integer limit,
-            @Argument FilterInput filters
+            @Argument FilterInput filters,
+            @Argument Double minScore
     ) {
         authGuard.requireAuth();
-        log.info("GraphQL search query: {}", query);
-
-        // Convert filters to map
-        Map<String, Object> filterMap = null;
-        if (filters != null) {
-            filterMap = new HashMap<>();
-            if (filters.category() != null) {
-                filterMap.put("category", filters.category());
-            }
-            if (filters.tags() != null) {
-                filterMap.put("tags", filters.tags());
-            }
+        String q = InputValidator.requireText(query, "query", 8000);
+        int l = InputValidator.range(limit, 5, 1, InputValidator.MAX_SEARCH_LIMIT, "limit");
+        if (minScore != null && (minScore < 0 || minScore > 1)) {
+            throw GatewayException.badRequest("minScore must be between 0 and 1");
         }
+        log.info("GraphQL search: '{}' (limit={})", q, l);
 
-        var result = vectorSearchService.search(query, limit, filterMap);
-
-        // Convert to GraphQL response
+        var result = vectorSearchService.search(q, l, filters != null ? filters.toMap() : null, minScore);
         List<SearchResultOutput> results = result.results().stream()
                 .map(r -> new SearchResultOutput(
-                        r.id(),
-                        r.document_id(),
-                        r.title(),
-                        r.snippet(),
-                        r.score(),
-                        convertMetadata(r.metadata())
-                ))
-                .collect(Collectors.toList());
-
+                        r.id(), r.document_id(), r.title(), r.snippet(), r.score(),
+                        MetadataOutput.from(r.metadata())))
+                .toList();
         return new SearchResponse(results, result.total_count(), result.query());
     }
 
-    /**
-     * Ask a question and get an AI-generated answer.
-     */
+    /** Ask a question and get an AI-generated answer grounded in the documents. */
     @QueryMapping
     public AskResponse ask(
             @Argument String question,
-            @Argument Integer maxSources
+            @Argument Integer maxSources,
+            @Argument FilterInput filters
     ) {
         authGuard.requireAuth();
-        log.info("GraphQL ask question: {}", question);
+        String q = InputValidator.requireText(question, "question", 4000);
+        int n = InputValidator.range(maxSources, 5, 1, InputValidator.MAX_SOURCES, "maxSources");
+        log.info("GraphQL ask: '{}' (maxSources={})", q, n);
 
-        var result = vectorSearchService.ask(question, maxSources);
-
-        // Convert sources
+        var result = vectorSearchService.ask(q, n, filters != null ? filters.toMap() : null);
         List<SourceOutput> sources = result.sources().stream()
-                .map(s -> new SourceOutput(
-                        s.document_id(),
-                        s.title(),
-                        s.snippet(),
-                        s.relevance()
-                ))
-                .collect(Collectors.toList());
-
+                .map(s -> new SourceOutput(s.document_id(), s.title(), s.snippet(), s.relevance()))
+                .toList();
         return new AskResponse(result.answer(), sources, result.confidence(), result.question());
     }
 
-    /**
-     * Get current user info. Returns null for unauthenticated requests.
-     */
+    /** Paginated document list (newest first). Pass mine: true to see only your own uploads. */
+    @QueryMapping
+    public DocumentPage documents(
+            @Argument Integer page,
+            @Argument Integer pageSize,
+            @Argument Boolean mine
+    ) {
+        User user = authGuard.requireAuth();
+        int p = InputValidator.range(page, 1, 1, Integer.MAX_VALUE, "page");
+        int size = InputValidator.range(pageSize, 20, 1, 100, "pageSize");
+
+        Page<Document> result = documentService.list(user, p, size, Boolean.TRUE.equals(mine));
+        return new DocumentPage(
+                result.getContent().stream().map(DocumentOutput::from).toList(),
+                result.getTotalElements(),
+                p,
+                size,
+                result.hasNext());
+    }
+
+    /** Current user, or null for anonymous requests. */
     @QueryMapping
     public UserOutput me() {
         User user = authGuard.optionalAuth();
-        if (user == null) {
-            return null;
-        }
-        return new UserOutput(
-                user.getId().toString(),
-                user.getEmail(),
-                user.getRole().name(),
-                user.getCreatedAt().toString()
-        );
+        return user == null ? null : UserOutput.from(user);
     }
-
-    // Helper method to convert metadata
-    private MetadataOutput convertMetadata(Map<String, Object> metadata) {
-        if (metadata == null) {
-            return null;
-        }
-        String category = metadata.get("category") != null ? metadata.get("category").toString() : null;
-        @SuppressWarnings("unchecked")
-        List<String> tags = metadata.get("tags") != null ? (List<String>) metadata.get("tags") : null;
-        return new MetadataOutput(category, tags);
-    }
-
-    // GraphQL Input/Output types
-    public record FilterInput(String category, List<String> tags) {}
-    public record SearchResponse(List<SearchResultOutput> results, Integer totalCount, String query) {}
-    public record SearchResultOutput(String id, String documentId, String title, String snippet, Double score, MetadataOutput metadata) {}
-    public record MetadataOutput(String category, List<String> tags) {}
-    public record AskResponse(String answer, List<SourceOutput> sources, Double confidence, String question) {}
-    public record SourceOutput(String documentId, String title, String snippet, Double relevance) {}
-    public record UserOutput(String id, String email, String role, String createdAt) {}
 }
-

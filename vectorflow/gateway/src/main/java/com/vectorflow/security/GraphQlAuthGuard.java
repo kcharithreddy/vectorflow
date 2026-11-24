@@ -79,7 +79,7 @@ public class GraphQlAuthGuard {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth != null && auth.getPrincipal() instanceof UserDetails userDetails) {
             log.debug("Authenticated user: {}", userDetails.getUsername());
-            return userRepository.findByEmail(userDetails.getUsername()).orElse(null);
+            return userRepository.findByEmailIgnoreCase(userDetails.getUsername()).orElse(null);
         }
         return null;
     }

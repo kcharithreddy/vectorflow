@@ -2,16 +2,16 @@ spring:
   application:
     name: vectorflow-gateway
 
-  # GraphQL Configuration
   graphql:
-    graphiql:
-      enabled: true
-      path: /graphiql
     path: /graphql
+    graphiql:
+      enabled: ${GRAPHIQL_ENABLED:true}
+      path: /graphiql
     schema:
       locations: classpath:graphql/
+      printer:
+        enabled: true   # GET /graphql/schema
 
-  # PostgreSQL Configuration
   datasource:
     url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:vectorflow_sql_db}
     username: ${POSTGRES_USER:vectorflow}
@@ -19,42 +19,61 @@ spring:
     driver-class-name: org.postgresql.Driver
 
   jpa:
+    open-in-view: false
     hibernate:
       ddl-auto: validate
     show-sql: false
-    properties:
-      hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
 
-  # Redis Configuration
   data:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2s
 
-  # Jackson Configuration
+  cache:
+    type: redis
+
   jackson:
-    property-naming-strategy: SNAKE_CASE
     serialization:
       write-dates-as-timestamps: false
 
-# Server Configuration
 server:
   port: 8080
+  shutdown: graceful
+  error:
+    include-stacktrace: never
+    include-message: never
 
-# Custom Application Properties
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+  health:
+    redis:
+      enabled: true
+
 app:
   python-service:
     url: ${PYTHON_SERVICE_URL:http://localhost:8000}
+    api-key: ${INTERNAL_API_KEY:}
+    connect-timeout: ${PYTHON_SERVICE_CONNECT_TIMEOUT:PT5S}
+    response-timeout: ${PYTHON_SERVICE_RESPONSE_TIMEOUT:PT180S}
   jwt:
     secret: ${JWT_SECRET:vectorflow-super-secret-key-change-in-production}
-    expiration: 86400000  # 24 hours in milliseconds
+    expiration: ${JWT_EXPIRATION_MS:86400000}  # 24 hours
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:8080}
+  cache:
+    search-ttl: ${SEARCH_CACHE_TTL:PT5M}
+    ask-ttl: ${ASK_CACHE_TTL:PT10M}
 
-# Logging
 logging:
   level:
-    com.vectorflow: DEBUG
-    org.springframework.graphql: DEBUG
-
+    com.vectorflow: ${LOG_LEVEL:INFO}

@@ -1,27 +1,19 @@
-# VectorFlow Python Service Dependencies
+# VectorFlow Python Service - runtime dependencies
 
-# Web Framework
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-python-multipart==0.0.6
+# Web framework
+fastapi==0.162.7
+uvicorn[standard]==0.53.0
 
-# Qdrant Vector Database
-qdrant-client==1.7.0
+# Vector database client (keep in step with the qdrant image in docker-compose.yml)
+qdrant-client==1.19.1
 
 # OpenAI API
-openai==1.12.0
+openai==1.109.1
 
-# Database
-psycopg2-binary==2.9.9
-sqlalchemy==2.0.25
+# Settings / validation
+pydantic==2.13.5
+pydantic-settings==2.15.0
+python-dotenv==1.2.2
 
-# Utilities
-pydantic==2.5.3
-pydantic-settings==2.1.0
-python-dotenv==1.0.0
-tiktoken==0.5.2
-httpx==0.26.0
-
-# Async support
-aiohttp==3.9.1
-
+# Tokenization for chunking
+tiktoken==0.13.0

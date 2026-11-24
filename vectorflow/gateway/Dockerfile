@@ -2,21 +2,21 @@ FROM maven:3.9-eclipse-temurin-17 AS build
 
 WORKDIR /app
 
-# Copy pom.xml first for dependency caching
+# Resolve dependencies first so they're cached between source changes
 COPY pom.xml .
-RUN mvn dependency:go-offline -B
+RUN mvn -B -q dependency:go-offline
 
-# Copy source and build
 COPY src ./src
-RUN mvn package -DskipTests
+RUN mvn -B -q package -DskipTests
 
-# Runtime stage - use non-alpine image for ARM64 compatibility
+# Runtime stage (non-alpine image for ARM64 compatibility)
 FROM eclipse-temurin:17-jre
 
 WORKDIR /app
-
-COPY --from=build /app/target/*.jar app.jar
+RUN useradd --system --uid 10001 appuser
+COPY --from=build /app/target/gateway-*.jar app.jar
+USER appuser
 
 EXPOSE 8080
 
-ENTRYPOINT ["java", "-jar", "app.jar"]
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-jar", "app.jar"]

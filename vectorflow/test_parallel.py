@@ -1,40 +1,49 @@
+"""Concurrency smoke test: compares sequential vs parallel search latency.
+
+Run after ingesting some data (see scripts/bulk_ingest_data.py):
+    pip install httpx
+    INTERNAL_API_KEY=... python test_parallel.py
+"""
+
 import asyncio
-import aiohttp
+import os
 import time
 
-BASE_URL = "http://localhost:8000/api"
+import httpx
+
+BASE_URL = os.getenv("PYTHON_SERVICE_URL", "http://localhost:8000") + "/api"
+HEADERS = {"X-Internal-API-Key": os.getenv("INTERNAL_API_KEY", "change-me-internal-api-key")}
 QUERIES = [
-    "What is OpenAI?",
-    "How does Codex work?",
-    "What is Cursor editor?",
+    "What is Qdrant?",
+    "How does FastAPI handle async requests?",
+    "What is a Docker container?",
     "Explain vector embeddings",
-    "What is RAG?",
+    "How do JWT tokens work?",
 ]
 
-async def search(session, query, req_id):
-    start = time.time()
-    async with session.post(f"{BASE_URL}/search", json={"query": query, "limit": 3}) as resp:
-        await resp.read()
-        elapsed = time.time() - start
-        print(f"  Request {req_id} ({query[:25]}...): {elapsed:.3f}s  [HTTP {resp.status}]")
-        return elapsed
 
-async def main():
-    print("=== Sequential (one at a time) ===")
-    seq_start = time.time()
-    async with aiohttp.ClientSession() as session:
+async def search(client: httpx.AsyncClient, query: str, req_id: int) -> float:
+    start = time.perf_counter()
+    resp = await client.post(f"{BASE_URL}/search", json={"query": query, "limit": 3})
+    elapsed = time.perf_counter() - start
+    print(f"  Request {req_id} ({query[:25]}...): {elapsed:.3f}s  [HTTP {resp.status_code}]")
+    return elapsed
+
+
+async def main() -> None:
+    async with httpx.AsyncClient(headers=HEADERS, timeout=60) as client:
+        print("=== Sequential (one at a time) ===")
+        seq_start = time.perf_counter()
         for i, q in enumerate(QUERIES):
-            await search(session, q, i)
-    seq_total = time.time() - seq_start
-    print(f"  Total: {seq_total:.3f}s\n")
+            await search(client, q, i)
+        seq_total = time.perf_counter() - seq_start
+        print(f"  Total: {seq_total:.3f}s\n")
 
-    print("=== Parallel (all at once) ===")
-    par_start = time.time()
-    async with aiohttp.ClientSession() as session:
-        tasks = [search(session, q, i) for i, q in enumerate(QUERIES)]
-        await asyncio.gather(*tasks)
-    par_total = time.time() - par_start
-    print(f"  Total: {par_total:.3f}s\n")
+        print("=== Parallel (all at once) ===")
+        par_start = time.perf_counter()
+        await asyncio.gather(*(search(client, q, i) for i, q in enumerate(QUERIES)))
+        par_total = time.perf_counter() - par_start
+        print(f"  Total: {par_total:.3f}s\n")
 
     speedup = seq_total / par_total
     print(f"Speedup: {speedup:.1f}x")
@@ -45,4 +54,6 @@ async def main():
     else:
         print("WARNING: No significant speedup - check async implementation.")
 
-asyncio.run(main())
+
+if __name__ == "__main__":
+    asyncio.run(main())

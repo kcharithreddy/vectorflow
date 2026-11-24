@@ -12,4 +12,3 @@ public class VectorFlowApplication {
         SpringApplication.run(VectorFlowApplication.class, args);
     }
 }
-

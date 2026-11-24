@@ -1,47 +1,68 @@
 """Configuration settings for the Python service."""
 
-from pydantic_settings import BaseSettings
 from functools import lru_cache
+from typing import List
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+APP_VERSION = "1.1.0"
 
 
 class Settings(BaseSettings):
-    """Application settings loaded from environment variables."""
-    
-    # Qdrant Configuration
+    """Application settings loaded from environment variables (or a .env file)."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=False,
+        extra="ignore",  # the shared .env also holds gateway/postgres settings
+    )
+
+    # Qdrant
     qdrant_host: str = "localhost"
     qdrant_port: int = 6333
+    qdrant_api_key: str = ""
     qdrant_collection: str = "documents"
-    
-    # OpenAI Configuration
+
+    # OpenAI
     openai_api_key: str = ""
-    embedding_model: str = "text-embedding-ada-002"
-    llm_model: str = "gpt-3.5-turbo"
-    
-    # PostgreSQL Configuration
-    postgres_host: str = "localhost"
-    postgres_port: int = 5432
-    postgres_db: str = "vectorflow_sql_db"
-    postgres_user: str = "vectorflow"
-    postgres_password: str = "vectorflow123"
-    
-    # Chunking Configuration
-    chunk_size: int = 500  # tokens
-    chunk_overlap: int = 50  # tokens
-    
-    # Search Configuration
+    openai_timeout_seconds: float = 60.0
+    openai_max_retries: int = 3
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimensions: int = 1536
+    embedding_batch_size: int = 100  # texts per embeddings request
+    llm_model: str = "gpt-4o-mini"
+    llm_temperature: float = 0.2
+    llm_max_tokens: int = 700
+
+    # Chunking (in tokens)
+    chunk_size: int = 500
+    chunk_overlap: int = 50
+
+    # Ingestion limits
+    max_document_chars: int = 2_000_000
+    max_bulk_documents: int = 100
+    bulk_ingest_concurrency: int = 4
+
+    # Search
     default_search_limit: int = 5
     max_search_limit: int = 20
-    
-    # CORS Configuration
+
+    # Security: shared secret the gateway sends in X-Internal-API-Key.
+    # Leave empty to disable (local development only).
+    internal_api_key: str = ""
+
+    # CORS
     cors_allowed_origins: str = "http://localhost:3000,http://localhost:8080"
-    
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
+
+    # Logging
+    log_level: str = "INFO"
+
+    @property
+    def cors_origins(self) -> List[str]:
+        return [o.strip() for o in self.cors_allowed_origins.split(",") if o.strip()]
 
 
 @lru_cache()
 def get_settings() -> Settings:
     """Get cached settings instance."""
     return Settings()
-

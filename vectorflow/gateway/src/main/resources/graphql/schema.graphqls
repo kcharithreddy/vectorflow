@@ -3,13 +3,16 @@
 # ============== Queries ==============
 
 type Query {
-    """Search for documents using vector similarity"""
-    search(query: String!, limit: Int = 5, filters: FilterInput): SearchResponse!
-    
-    """Ask a question and get an AI-generated answer with sources"""
-    ask(question: String!, maxSources: Int = 5): AskResponse!
-    
-    """Get current user info"""
+    """Search for documents using vector similarity (limit: 1-20, minScore: 0-1)"""
+    search(query: String!, limit: Int = 5, filters: FilterInput, minScore: Float): SearchResponse!
+
+    """Ask a question and get an AI-generated answer with sources (maxSources: 1-10)"""
+    ask(question: String!, maxSources: Int = 5, filters: FilterInput): AskResponse!
+
+    """List ingested documents, newest first. Set mine: true to list only your own uploads."""
+    documents(page: Int = 1, pageSize: Int = 20, mine: Boolean = false): DocumentPage!
+
+    """Get current user info (null when not authenticated)"""
     me: User
 }
 
@@ -19,10 +22,10 @@ type Mutation {
     """Ingest a new document (requires EDITOR or ADMIN role)"""
     ingest(input: IngestInput!): IngestResponse!
     
-    """Delete a document by ID (requires EDITOR or ADMIN role)"""
+    """Delete a document by ID (EDITORs: own documents only; ADMINs: any document)"""
     deleteDocument(documentId: ID!): DeleteResponse!
     
-    """Register a new user"""
+    """Register a new user (password: 8-72 characters). New users get the VIEWER role."""
     register(input: RegisterInput!): AuthResponse!
     
     """Login and get JWT token"""
@@ -199,6 +202,25 @@ type AssignRoleResponse {
     message: String!
     """Updated user"""
     user: User!
+}
+
+type Document {
+    id: ID!
+    title: String!
+    chunkCount: Int!
+    status: DocumentStatus!
+    metadata: Metadata
+    """Email of the user who ingested the document"""
+    ownerEmail: String
+    createdAt: String!
+}
+
+type DocumentPage {
+    items: [Document!]!
+    totalCount: Int!
+    page: Int!
+    pageSize: Int!
+    hasNext: Boolean!
 }
 
 type Metadata {

@@ -1,0 +1,7 @@
+# Development overrides: live-reload the Python service from your working tree.
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+services:
+  python-service:
+    volumes:
+      - ./python-service:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
