@@ -31,6 +31,7 @@ VectorFlow:
 
 | Layer | Technology | Purpose |
 |-------|------------|---------|
+| **Web App** | React + TypeScript + Vite (served by nginx) | Login, document management, chat with cited sources |
 | **API Gateway** | Spring Boot + GraphQL | Unified API, JWT auth, caching |
 | **AI Service** | Python + FastAPI | Embeddings, RAG, LLM orchestration |
 | **Vector DB** | Qdrant | Similarity search, vector storage |
@@ -352,12 +353,15 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 
 | Service | URL | Description |
 |---------|-----|-------------|
+| **Web App** | **http://localhost:3000** | **Sign in, add documents, ask questions** |
 | GraphQL API | http://localhost:8080/graphql | Main API endpoint |
 | GraphiQL UI | http://localhost:8080/graphiql | Interactive GraphQL IDE |
 | Gateway health | http://localhost:8080/actuator/health | Includes DB, Redis and Python service |
 | Python Docs | http://localhost:8000/docs | FastAPI Swagger UI (localhost only) |
 
 ### 4. Log In with a Seeded User
+
+Open **http://localhost:3000** and click **editor** under "Demo accounts", or use the GraphQL API directly.
 
 `scripts/init-db.sql` seeds two **development-only** accounts:
 
@@ -524,6 +528,7 @@ All `/api/*` endpoints require the `X-Internal-API-Key` header when `INTERNAL_AP
 ```
 vectorflow/
 ├── docker-compose.yml          # Full stack (pinned images, health checks)
+├── frontend/                   # React + TypeScript web app (Vite build, nginx in Docker)
 ├── docker-compose.dev.yml      # Dev override: live-reload Python service
 ├── env.sample                  # Environment variables template
 ├── test_parallel.py            # Concurrency smoke test for /api/search
@@ -605,6 +610,13 @@ pip install -r requirements-dev.txt
 uvicorn main:app --reload --port 8000
 ```
 
+**Web App** (hot reload; proxies `/graphql` to the gateway on :8080):
+```bash
+cd frontend
+npm install
+npm run dev        # http://localhost:3000
+```
+
 **Spring Boot Gateway** (needs Postgres + Redis, e.g. `docker compose up postgres redis qdrant python-service`):
 ```bash
 cd gateway
@@ -619,6 +631,9 @@ cd python-service && python -m pytest -q
 
 # Gateway: JWT, validation, caching keys, DocumentService, HTTP client error mapping
 cd gateway && mvn test
+
+# Web app: type-check + production build
+cd frontend && npm run build
 ```
 
 Both suites run offline (no OpenAI key, Qdrant, Postgres or Redis needed) and run in CI
@@ -668,6 +683,10 @@ docker compose down -v                  # stop and delete all data (re-runs init
 
 **`Qdrant collection ... has vector size X, but EMBEDDING_DIMENSIONS is Y`** → you changed embedding
 settings; use a new `QDRANT_COLLECTION` or delete the old collection.
+
+**Port already in use (`failed to bind host port`)** → another program is using that port on your machine.
+The project's Postgres is published on **5433** (set `POSTGRES_HOST_PORT` to change it), so a locally installed
+PostgreSQL on 5432 no longer conflicts. The web app uses **3000** and the gateway **8080**.
 
 **Postgres `password authentication failed`** → the volume was created with different credentials:
 `docker compose down -v && docker compose up` (deletes data).

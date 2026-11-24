@@ -40,6 +40,22 @@ jobs:
           cache: maven
       - run: mvn -B verify
 
+  frontend:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vectorflow/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: vectorflow/frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build   # type-checks with tsc, then bundles with Vite
+
   compose:
     name: Validate docker-compose
     runs-on: ubuntu-latest
