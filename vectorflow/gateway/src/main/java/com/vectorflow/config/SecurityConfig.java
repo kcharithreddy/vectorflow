@@ -45,6 +45,8 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/graphql", "/graphiql", "/graphiql/**").permitAll()
+                        // REST endpoints authorize per request via GraphQlAuthGuard (JSON 401/403)
+                        .requestMatchers("/api/**").permitAll()
                         .requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info").permitAll()
                         .anyRequest().authenticated()
                 )

@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     # Ingestion limits
     max_document_chars: int = 2_000_000
     max_bulk_documents: int = 100
+    max_upload_bytes: int = 20 * 1024 * 1024  # 20 MB per uploaded file
     bulk_ingest_concurrency: int = 4
 
     # Search

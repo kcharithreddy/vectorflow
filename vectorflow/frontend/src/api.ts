@@ -52,6 +52,17 @@ export interface SearchHit {
   metadata: Metadata | null;
 }
 
+export interface UploadResult {
+  documentId: string;
+  title: string;
+  chunkCount: number;
+  status: string;
+  message: string;
+  fileType: string;
+  pages: number | null;
+  characters: number;
+}
+
 export interface Filters {
   category?: string;
   tags?: string[];
@@ -162,6 +173,37 @@ export const api = {
       { t: title, c: content, m: metadata },
     );
     return d.ingest;
+  },
+
+  /** Upload a PDF/DOCX/text file; the server extracts its text and ingests it. */
+  async uploadFile(file: File, opts: { title?: string; category?: string; tags?: string[] } = {}) {
+    const form = new FormData();
+    form.append("file", file);
+    if (opts.title?.trim()) form.append("title", opts.title.trim());
+    if (opts.category?.trim()) form.append("category", opts.category.trim());
+    if (opts.tags?.length) form.append("tags", opts.tags.join(","));
+
+    const token = getToken();
+    let res: Response;
+    try {
+      res = await fetch("/api/documents/upload", {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+      });
+    } catch {
+      throw new ApiError("Cannot reach the VectorFlow gateway. Is it running?");
+    }
+    let body: UploadResult & { error?: string };
+    try {
+      body = await res.json();
+    } catch {
+      throw new ApiError(res.status === 413 ? "File is too large (max 20 MB)" : `Upload failed (HTTP ${res.status})`);
+    }
+    if (!res.ok) {
+      throw new ApiError(body.error ?? `Upload failed (HTTP ${res.status})`, res.status === 401 ? "UNAUTHORIZED" : undefined);
+    }
+    return body as UploadResult;
   },
 
   async deleteDocument(id: string) {

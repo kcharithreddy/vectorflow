@@ -30,6 +30,9 @@ public interface VectorSearchService {
 
     boolean healthCheck();
 
+    /** Extract readable text from an uploaded file (PDF, DOCX, text formats). */
+    ExtractResult extractText(String filename, byte[] data);
+
     // ---- DTOs shared across implementations ----
 
     record IngestResult(
@@ -67,6 +70,14 @@ public interface VectorSearchService {
             String title,
             String snippet,
             Double relevance
+    ) implements Serializable {}
+
+    record ExtractResult(
+            String filename,
+            String file_type,
+            String text,
+            Integer characters,
+            Integer pages
     ) implements Serializable {}
 
     record BulkIngestDocument(

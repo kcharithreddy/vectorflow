@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from config import APP_VERSION, get_settings
 from exceptions import VectorFlowError
 from models.schemas import HealthResponse
-from routers import ask, bulk_ingest, ingest, search
+from routers import ask, bulk_ingest, extract, ingest, search
 from services.qdrant_service import get_qdrant_service
 
 settings = get_settings()
@@ -79,6 +79,7 @@ app.include_router(ingest.router)
 app.include_router(bulk_ingest.router)
 app.include_router(search.router)
 app.include_router(ask.router)
+app.include_router(extract.router)
 
 
 @app.exception_handler(VectorFlowError)

@@ -17,3 +17,8 @@ python-dotenv==1.2.2
 
 # Tokenization for chunking
 tiktoken==0.13.0
+
+# File uploads + text extraction (PDF, DOCX)
+python-multipart==0.0.33
+pypdf==7.0.1
+python-docx==1.2.0

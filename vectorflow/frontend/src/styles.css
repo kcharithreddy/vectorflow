@@ -81,7 +81,8 @@ input[type="file"] { padding: 7px; }
 input[type="checkbox"] { width: auto; }
 
 .form { display: flex; flex-direction: column; gap: 14px; }
-.form label { display: flex; flex-direction: column; gap: 6px; font-size: 0.9rem; font-weight: 600; }
+.form label { display: block; font-size: 0.9rem; font-weight: 600; }
+.form label > input, .form label > textarea { display: block; margin-top: 6px; }
 .form .muted { font-weight: 400; }
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
@@ -216,6 +217,17 @@ button.cite:hover { background: var(--primary); color: #fff; }
 .modal-backdrop { position: fixed; inset: 0; background: rgba(10, 10, 20, 0.45); display: grid; place-items: center; padding: 16px; z-index: 20; }
 .modal { width: 100%; max-width: 600px; max-height: calc(100vh - 32px); overflow-y: auto; background: var(--surface); border-radius: 16px; padding: 24px; box-shadow: var(--shadow); }
 .modal h2 { margin-bottom: 16px; font-size: 1.2rem; }
+.dropzone {
+  border: 2px dashed var(--border); border-radius: 12px; padding: 28px 16px; text-align: center;
+  display: flex; flex-direction: column; gap: 4px; cursor: pointer; background: var(--surface-2);
+  transition: border-color 0.15s, background 0.15s;
+}
+.dropzone:hover, .dropzone:focus-visible, .dropzone.dragging { border-color: var(--primary); background: var(--primary-soft); outline: none; }
+.file-chip { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; background: var(--surface-2); }
+.file-icon { font-size: 0.68rem; font-weight: 800; background: var(--primary); color: #fff; border-radius: 6px; padding: 5px 6px; }
+@media (prefers-color-scheme: dark) { .file-icon { color: #0f1017; } }
+.file-name { flex: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.modal .tabs { margin-bottom: 16px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
 
 /* ---------- mobile ---------- */

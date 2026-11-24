@@ -440,6 +440,17 @@ mutation {
 }
 ```
 
+**Upload a file** (EDITOR / ADMIN; PDF, DOCX, TXT, Markdown, CSV… up to 20 MB). File uploads use a small
+REST endpoint on the gateway, since GraphQL isn't designed for binary uploads; the web app's **+ Add → Upload file**
+uses it, or call it directly:
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+     -F file=@lecture-notes.pdf -F category=school -F tags="ml,week1" \
+     http://localhost:8080/api/documents/upload
+```
+Returns `documentId`, `title` (defaults to the file name), `chunkCount`, `status`, `pages` and `characters`.
+Scanned (image-only) PDFs are rejected with a clear message; OCR isn't supported yet.
+
 **Bulk ingest** (up to 100 documents; each result reports its own status):
 ```graphql
 mutation {
@@ -513,6 +524,7 @@ All `/api/*` endpoints require the `X-Internal-API-Key` header when `INTERNAL_AP
 |--------|------|---------|
 | POST | `/api/ingest` | Chunk + embed + store one document (optional caller-supplied `document_id`) |
 | POST | `/api/bulk-ingest` | Ingest up to 100 documents concurrently |
+| POST | `/api/extract` | Extract text from an uploaded PDF / DOCX / text file (multipart `file`) |
 | POST | `/api/search` | Similarity search with `filters` (`category`, `tags`, `date_from`, `date_to`) and `min_score` |
 | POST | `/api/ask` | RAG answer with sources |
 | GET | `/api/documents` | Paginated document list |
@@ -541,6 +553,7 @@ vectorflow/
 │       │   ├── config/         # Security, Redis cache, GraphQL error mapping, health
 │       │   ├── exception/      # GatewayException (client-safe errors)
 │       │   ├── graphql/        # QueryResolver, MutationResolver, GraphQlTypes
+│       │   ├── web/            # REST file upload endpoint + JSON error handler
 │       │   ├── model/          # User, Document (JPA), Role, dto/Metadata
 │       │   ├── repository/     # Spring Data JPA repositories
 │       │   ├── security/       # JWT provider + filter, GraphQlAuthGuard
@@ -557,7 +570,7 @@ vectorflow/
 │   ├── exceptions.py           # Error types + OpenAI error translation
 │   ├── models/schemas.py       # Request/response models + validation
 │   ├── routers/                # ingest, bulk_ingest, search, ask
-│   ├── services/               # embedding (chunking), qdrant, llm (RAG), ingestion pipeline
+│   ├── services/               # embedding (chunking), qdrant, llm (RAG), ingestion, file text extraction
 │   └── tests/                  # pytest suite (runs offline with fakes + in-memory Qdrant)
 │
 ├── scripts/

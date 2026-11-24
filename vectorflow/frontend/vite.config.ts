@@ -10,6 +10,7 @@ export default defineConfig({
     port: 3000,
     proxy: {
       "/graphql": gateway,
+      "/api": gateway,
       "/actuator": gateway,
     },
   },

@@ -10,7 +10,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.cache.annotation.Caching;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.graphql.execution.ErrorType;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.MultipartBodyBuilder;
+import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
@@ -160,6 +164,25 @@ public class PythonServiceClient implements VectorSearchService {
             }
             throw e;
         }
+    }
+
+    @Override
+    public ExtractResult extractText(String filename, byte[] data) {
+        MultipartBodyBuilder body = new MultipartBodyBuilder();
+        body.part("file", new ByteArrayResource(data) {
+            @Override
+            public String getFilename() {
+                return filename;
+            }
+        }).contentType(MediaType.APPLICATION_OCTET_STREAM);
+
+        return call("extract", () -> webClient.post()
+                .uri("/api/extract")
+                .contentType(MediaType.MULTIPART_FORM_DATA)
+                .body(BodyInserters.fromMultipartData(body.build()))
+                .retrieve()
+                .bodyToMono(ExtractResult.class)
+                .block());
     }
 
     @Override

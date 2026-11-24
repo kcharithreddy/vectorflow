@@ -24,12 +24,16 @@ class PythonServiceClientTest {
     private final AtomicReference<String> seenKey = new AtomicReference<>();
     private volatile int status = 200;
     private volatile String body = "{}";
+    private final AtomicReference<String> seenContentType = new AtomicReference<>();
+    private final AtomicReference<String> seenBody = new AtomicReference<>();
 
     @BeforeEach
     void start() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", exchange -> {
             seenKey.set(exchange.getRequestHeaders().getFirst(PythonServiceClient.INTERNAL_API_KEY_HEADER));
+            seenContentType.set(exchange.getRequestHeaders().getFirst("Content-Type"));
+            seenBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.ISO_8859_1));
             byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(status, bytes.length);
@@ -90,6 +94,27 @@ class PythonServiceClientTest {
         status = 200;
         body = "{\"message\":\"ok\"}";
         assertThat(client("").deleteDocument("x")).isTrue();
+    }
+
+    @Test
+    void extractSendsMultipartFileAndParsesResult() {
+        body = "{\"filename\":\"guide.pdf\",\"file_type\":\"pdf\",\"text\":\"Hello\",\"characters\":5,\"pages\":2}";
+        var result = client("k").extractText("guide.pdf", "%PDF-bytes".getBytes(StandardCharsets.ISO_8859_1));
+        assertThat(seenContentType.get()).startsWith("multipart/form-data");
+        assertThat(seenBody.get()).contains("filename=\"guide.pdf\"").contains("%PDF-bytes");
+        assertThat(result.text()).isEqualTo("Hello");
+        assertThat(result.pages()).isEqualTo(2);
+    }
+
+    @Test
+    void extractRejectionBecomesBadRequest() {
+        status = 400;
+        body = "{\"detail\":\"No readable text found in 'scan.pdf'. It may be a scanned PDF\"}";
+        assertThatThrownBy(() -> client("").extractText("scan.pdf", new byte[]{1}))
+                .isInstanceOfSatisfying(GatewayException.class, e -> {
+                    assertThat(e.getErrorType()).isEqualTo(ErrorType.BAD_REQUEST);
+                    assertThat(e.getMessage()).contains("scanned");
+                });
     }
 
     @Test
