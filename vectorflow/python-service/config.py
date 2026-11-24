@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     # Search
     default_search_limit: int = 5
     max_search_limit: int = 20
+    # Ask: chunks scoring below this cosine similarity are treated as irrelevant
+    # (text-embedding-3 scores for genuinely related text are typically 0.25-0.7).
+    ask_min_relevance: float = 0.2
 
     # Security: shared secret the gateway sends in X-Internal-API-Key.
     # Leave empty to disable (local development only).

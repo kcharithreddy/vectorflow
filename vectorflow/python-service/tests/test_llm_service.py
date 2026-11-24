@@ -8,8 +8,9 @@ from services.text_utils import make_snippet
 
 
 class FakeChat:
-    def __init__(self, reject_logprobs=False):
+    def __init__(self, reject_logprobs=False, reply=" Answer [1] "):
         self.reject_logprobs = reject_logprobs
+        self.reply = reply
         self.calls = []
 
     async def create(self, **kwargs):
@@ -21,7 +22,7 @@ class FakeChat:
         if kwargs.get("logprobs"):
             logprobs = SimpleNamespace(content=[SimpleNamespace(logprob=-0.1), SimpleNamespace(logprob=-0.1)])
         return SimpleNamespace(choices=[SimpleNamespace(
-            message=SimpleNamespace(content=" Answer [1] "), logprobs=logprobs)])
+            message=SimpleNamespace(content=self.reply), logprobs=logprobs)])
 
 
 def make_service(settings, embedding_service, fake_qdrant, chat):
@@ -48,7 +49,7 @@ async def test_ask_with_results(settings, embedding_service, fake_qdrant):
     assert result["answer"] == "Answer [1]"
     assert result["confidence"] == 0.9
     assert result["sources"][0] == {"document_id": "d1", "title": "Doc", "snippet": "Some text", "relevance": 0.9123}
-    assert fake_qdrant.last_search == {"limit": 3, "filters": {"category": "x"}, "min_score": None}
+    assert fake_qdrant.last_search == {"limit": 3, "filters": {"category": "x"}, "min_score": 0.2}
     assert "[1] Doc" in chat.calls[0]["messages"][1]["content"]
 
 
@@ -74,3 +75,26 @@ def test_make_snippet_word_boundary():
     snippet = make_snippet(text, 50)
     assert snippet.endswith("...") and len(snippet) <= 53
     assert "  " not in make_snippet("a   b\n\nc")
+
+
+async def test_refusal_drops_sources_and_confidence(settings, embedding_service, fake_qdrant):
+    fake_qdrant.search_results = [{"id": "1", "score": 0.21, "document_id": "d", "title": "T", "text": "x"}]
+    chat = FakeChat(reply="I don\u2019t have enough information to answer that question.")
+    svc = make_service(settings, embedding_service, fake_qdrant, chat)
+    result = await svc.ask_async("what is python?")
+    assert result["sources"] == []
+    assert result["confidence"] <= 0.1
+
+
+def test_refusal_detection():
+    assert LLMService.is_refusal("The sources do not contain information about Python.")
+    assert not LLMService.is_refusal("A pod is the smallest deployable unit [1].")
+    long_answer = "Pods are units [1]. " * 30 + "Some details are not enough information."
+    assert not LLMService.is_refusal(long_answer)  # partial caveat inside a real answer
+
+
+async def test_min_relevance_can_be_disabled(settings, embedding_service, fake_qdrant):
+    settings.ask_min_relevance = 0.0
+    svc = make_service(settings, embedding_service, fake_qdrant, FakeChat())
+    await svc.ask_async("q?")
+    assert fake_qdrant.last_search["min_score"] is None

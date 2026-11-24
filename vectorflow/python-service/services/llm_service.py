@@ -49,6 +49,7 @@ Rules:
         self.max_tokens = settings.llm_max_tokens
         self.embedding_service = embedding_service or get_embedding_service()
         self.qdrant_service = qdrant_service or get_qdrant_service()
+        self.min_relevance = settings.ask_min_relevance
         self._logprobs_supported = True
 
     async def retrieve_context_async(
@@ -63,6 +64,7 @@ Rules:
             query_embedding=query_embedding,
             limit=max_sources,
             filters=filters,
+            min_score=self.min_relevance or None,
         )
 
     async def generate_answer_async(self, question: str, context: str) -> Tuple[str, float]:
@@ -99,6 +101,11 @@ Rules:
             return {"answer": NO_CONTEXT_ANSWER, "sources": [], "confidence": 0.0}
 
         answer, confidence = await self.generate_answer_async(question, self.format_context(results))
+        if self.is_refusal(answer):
+            # The model's token confidence measures fluency, not whether the
+            # documents answered the question - a "don't know" is low confidence
+            # and its retrieved passages aren't real sources.
+            return {"answer": answer, "sources": [], "confidence": min(confidence, 0.1)}
         return {
             "answer": answer,
             "sources": self.build_sources(results),
@@ -122,6 +129,26 @@ Rules:
             {"role": "system", "content": self.SYSTEM_PROMPT},
             {"role": "user", "content": f"Sources:\n\n{context}\n\nQuestion: {question}"},
         ]
+
+    REFUSAL_MARKERS = (
+        "don't have enough information",
+        "do not have enough information",
+        "not enough information",
+        "don't contain",
+        "do not contain",
+        "doesn't contain",
+        "does not contain",
+        "no information about",
+        "cannot answer",
+        "can't answer",
+        "unable to answer",
+    )
+
+    @classmethod
+    def is_refusal(cls, answer: str) -> bool:
+        """True when the model says the sources don't answer the question."""
+        text = answer.lower().replace("\u2019", "'")
+        return len(text) < 400 and any(m in text for m in cls.REFUSAL_MARKERS)
 
     @classmethod
     def confidence_from_response(cls, response, answer: str) -> float:
