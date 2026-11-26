@@ -51,8 +51,8 @@ services:
     image: redis:7-alpine
     container_name: vectorflow-redis
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:6379:6379"
+    # No host port: only the gateway (inside Docker) talks to Redis.
+    # To inspect it, use: docker compose exec redis redis-cli
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
