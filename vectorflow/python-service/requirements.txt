@@ -1,24 +1,24 @@
 # VectorFlow Python Service - runtime dependencies
 
 # Web framework
-fastapi==0.162.7
-uvicorn[standard]==0.53.0
+fastapi==0.165.0
+uvicorn[standard]==0.54.0
 
 # Vector database client (keep in step with the qdrant image in docker-compose.yml)
-qdrant-client==1.19.1
+qdrant-client==1.20.0
 
 # OpenAI API
-openai==1.109.1
+openai==3.57.0
 
 # Settings / validation
-pydantic==2.13.5
-pydantic-settings==2.15.0
-python-dotenv==1.2.2
+pydantic==2.14.4
+pydantic-settings==2.16.3
+python-dotenv==1.2.4
 
 # Tokenization for chunking
-tiktoken==0.13.0
+tiktoken==0.14.0
 
 # File uploads + text extraction (PDF, DOCX)
-python-multipart==0.0.33
-pypdf==7.0.1
+python-multipart==0.0.34
+pypdf==7.1.1
 python-docx==1.2.0
