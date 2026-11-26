@@ -170,6 +170,8 @@ input[type="checkbox"] { width: auto; }
 .error-bubble { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
 .mode-tag { font-size: 0.7rem; text-transform: uppercase; opacity: 0.75; margin-right: 8px; font-weight: 700; }
 .answer { font-size: 0.98rem; }
+.cursor { display: inline-block; width: 8px; height: 1.05em; margin-left: 2px; vertical-align: -2px; background: var(--primary); animation: caret 1s steps(1) infinite; }
+@keyframes caret { 50% { opacity: 0; } }
 
 .cite {
   display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px; margin: 0 2px;

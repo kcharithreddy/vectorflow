@@ -52,8 +52,12 @@ async def lifespan(app: FastAPI):
                 settings.embedding_model, settings.embedding_dimensions, settings.llm_model)
     if not settings.openai_api_key:
         logger.warning("OPENAI_API_KEY is not set - ingest/search/ask will fail")
-    if not settings.internal_api_key:
-        logger.warning("INTERNAL_API_KEY is not set - /api endpoints are unauthenticated")
+    current = get_settings()
+    problems = current.security_problems()
+    if problems and current.security_strict:
+        raise RuntimeError("SECURITY_STRICT is on: " + "; ".join(problems))
+    for problem in problems:
+        logger.warning("Security: %s", problem)
     await _bootstrap_qdrant()
     yield
     await get_qdrant_service().close()

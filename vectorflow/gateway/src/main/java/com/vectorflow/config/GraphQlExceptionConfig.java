@@ -1,6 +1,8 @@
 package com.vectorflow.config;
 
 import com.vectorflow.exception.GatewayException;
+import com.vectorflow.web.RateLimitExceededException;
+import graphql.ErrorClassification;
 import graphql.GraphQLError;
 import graphql.schema.DataFetchingEnvironment;
 import lombok.extern.slf4j.Slf4j;
@@ -29,6 +31,15 @@ public class GraphQlExceptionConfig {
                         log.error("Upstream failure in {}: {}", env.getField().getName(), ge.getMessage(), ge.getCause());
                     }
                     return build(env, ge.getMessage(), ge.getErrorType());
+                }
+                if (ex instanceof RateLimitExceededException rl) {
+                    return GraphQLError.newError()
+                            .message(rl.getMessage())
+                            .errorType(ErrorClassification.errorClassification("TOO_MANY_REQUESTS"))
+                            .extensions(java.util.Map.of("retryAfterSeconds", rl.getRetryAfterSeconds()))
+                            .path(env.getExecutionStepInfo().getPath())
+                            .location(env.getField().getSourceLocation())
+                            .build();
                 }
                 if (ex instanceof AccessDeniedException) {
                     ErrorType type = ex.getMessage() != null && ex.getMessage().startsWith("Authentication required")

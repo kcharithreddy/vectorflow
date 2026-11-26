@@ -1,5 +1,6 @@
 package com.vectorflow.service;
 
+import com.vectorflow.audit.AuditLog;
 import com.vectorflow.exception.GatewayException;
 import com.vectorflow.model.Document;
 import com.vectorflow.model.Role;
@@ -35,6 +36,7 @@ public class DocumentService {
 
     private final VectorSearchService vectorSearchService;
     private final DocumentRepository documentRepository;
+    private final AuditLog audit;
 
     public record DocumentInput(String title, String content, Metadata metadata) {}
 
@@ -47,7 +49,8 @@ public class DocumentService {
                     document.getId().toString(), clean.title(), clean.content(), clean.metadata());
             applyResult(document, result.status(), result.chunk_count());
             documentRepository.save(document);
-            log.info("Document ingested: id={} chunks={} user={}", document.getId(), result.chunk_count(), user.getEmail());
+            audit.event("DOCUMENT_INGEST", "id", document.getId(), "title", clean.title(), "user", user.getEmail(),
+                    "status", document.getStatus());
             return result;
         } catch (RuntimeException e) {
             document.setStatus(Document.STATUS_FAILED);
@@ -96,7 +99,7 @@ public class DocumentService {
             }
         }
         documentRepository.saveAll(documents);
-        log.info("Bulk ingest by {}: {}/{} succeeded", user.getEmail(), result.successful(), result.total());
+        audit.event("DOCUMENT_BULK_INGEST", "user", user.getEmail(), "total", result.total(), "ok", result.successful());
         return result;
     }
 
@@ -119,7 +122,8 @@ public class DocumentService {
 
         boolean deletedVectors = vectorSearchService.deleteDocument(id.toString());
         row.ifPresent(documentRepository::delete);
-        log.info("Document {} deleted by {} (vectors={}, row={})", id, user.getEmail(), deletedVectors, row.isPresent());
+        audit.event("DOCUMENT_DELETE", "id", id, "user", user.getEmail(), "role", user.getRole(),
+                "vectors", deletedVectors, "row", row.isPresent());
         return deletedVectors || row.isPresent();
     }
 

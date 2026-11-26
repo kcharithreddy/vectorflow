@@ -86,7 +86,8 @@ def test_scanned_pdf_without_text_is_rejected_with_hint():
     ("noext", b"data", "Unsupported file type"),
     ("empty.txt", b"", "empty"),
     ("broken.pdf", b"%PDF-1.4 garbage", "could not be read"),
-    ("broken.docx", b"not a zip", "could not be read"),
+    ("broken.docx", b"not a zip", "not a valid DOCX"),
+    ("broken2.docx", b"PK\x03\x04garbage", "could not be read"),
 ])
 def test_bad_files(name, data, msg):
     with pytest.raises(InvalidRequestError, match=msg):
@@ -120,3 +121,18 @@ def test_extract_endpoint_size_limit(client):
     finally:
         get_settings.cache_clear()
     assert r.status_code == 400 and "larger than" in r.json()["detail"]
+
+
+@pytest.mark.parametrize("name,data", [
+    ("invoice.pdf", b"MZ\x90\x00 this is a windows executable"),
+    ("report.docx", b"%PDF-1.4 a pdf pretending to be docx"),
+    ("notes.txt", b"\x7fELF\x02\x01\x01 linux binary"),
+    ("notes.md", b"MZ\x90\x00"),
+])
+def test_content_must_match_extension(name, data):
+    with pytest.raises(InvalidRequestError, match="doesn't"):
+        extract_text(name, data)
+
+
+def test_utf16_text_with_bom_is_allowed():
+    assert extract_text("u16.txt", "hello world".encode("utf-16")).text == "hello world"

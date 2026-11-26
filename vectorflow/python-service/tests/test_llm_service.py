@@ -98,3 +98,95 @@ async def test_min_relevance_can_be_disabled(settings, embedding_service, fake_q
     svc = make_service(settings, embedding_service, fake_qdrant, FakeChat())
     await svc.ask_async("q?")
     assert fake_qdrant.last_search["min_score"] is None
+
+
+class FakeStreamChat:
+    """Streams the reply in pieces, like OpenAI's stream=True."""
+
+    def __init__(self, pieces, logprob=-0.05):
+        self.pieces = pieces
+        self.logprob = logprob
+        self.calls = []
+
+    async def create(self, **kwargs):
+        self.calls.append(kwargs)
+        assert kwargs.get("stream") is True
+
+        async def gen():
+            yield SimpleNamespace(choices=[])  # keep-alive chunk with no choices
+            for p in self.pieces:
+                lp = SimpleNamespace(content=[SimpleNamespace(logprob=self.logprob)]) if kwargs.get("logprobs") else None
+                yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=p), logprobs=lp)])
+            yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=None), logprobs=None)])
+
+        return gen()
+
+
+async def collect(agen):
+    return [e async for e in agen]
+
+
+async def test_stream_emits_sources_deltas_then_done(settings, embedding_service, fake_qdrant):
+    fake_qdrant.search_results = [{"id": "1", "score": 0.6, "document_id": "d1", "title": "Doc", "text": "Pods run containers"}]
+    chat = FakeStreamChat(["A pod ", "runs containers ", "[1]."])
+    svc = make_service(settings, embedding_service, fake_qdrant, chat)
+    events = await collect(svc.ask_stream_async("What is a pod?"))
+    kinds = [e["event"] for e in events]
+    assert kinds == ["sources", "delta", "delta", "delta", "done"]
+    assert "".join(e["data"]["text"] for e in events if e["event"] == "delta") == "A pod runs containers [1]."
+    done = events[-1]["data"]
+    assert done["sources"][0]["document_id"] == "d1"
+    assert done["confidence"] == 0.95  # exp(-0.05)
+
+
+async def test_stream_off_topic_skips_llm(settings, embedding_service, fake_qdrant):
+    chat = FakeStreamChat(["unused"])
+    svc = make_service(settings, embedding_service, fake_qdrant, chat)
+    events = await collect(svc.ask_stream_async("capital of France?"))
+    assert [e["event"] for e in events] == ["delta", "done"]
+    assert events[-1]["data"] == {"confidence": 0.0, "sources": []}
+    assert chat.calls == []
+
+
+async def test_stream_refusal_hides_sources(settings, embedding_service, fake_qdrant):
+    fake_qdrant.search_results = [{"id": "1", "score": 0.3, "document_id": "d", "title": "T", "text": "x"}]
+    chat = FakeStreamChat(["I don't have enough ", "information to answer that."])
+    svc = make_service(settings, embedding_service, fake_qdrant, chat)
+    done = (await collect(svc.ask_stream_async("q?")))[-1]["data"]
+    assert done["sources"] == [] and done["confidence"] <= 0.1
+
+
+def test_stream_endpoint_sse_format(client):
+    import main
+    from services.llm_service import get_llm_service
+
+    class StubLLM:
+        async def ask_stream_async(self, question, max_sources, filters):
+            yield {"event": "sources", "data": {"sources": []}}
+            yield {"event": "delta", "data": {"text": "Hello"}}
+            yield {"event": "done", "data": {"confidence": 0.9, "sources": []}}
+
+    main.app.dependency_overrides[get_llm_service] = lambda: StubLLM()
+    r = client.post("/api/ask/stream", json={"question": "hi"})
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/event-stream")
+    assert r.text.split("\n\n")[1] == 'event: delta\ndata: {"text": "Hello"}'
+    assert r.text.rstrip().endswith('"sources": []}')
+
+
+def test_stream_endpoint_reports_errors_as_events(client):
+    import main
+    from services.llm_service import get_llm_service
+
+    class FailingLLM:
+        async def ask_stream_async(self, question, max_sources, filters):
+            yield {"event": "sources", "data": {"sources": []}}
+            raise RuntimeError("boom")
+
+    main.app.dependency_overrides[get_llm_service] = lambda: FailingLLM()
+    r = client.post("/api/ask/stream", json={"question": "hi"})
+    assert 'event: error\ndata: {"message": "Failed to generate answer"}' in r.text
+
+
+def test_stream_endpoint_validates_input(client):
+    assert client.post("/api/ask/stream", json={"question": "  "}).status_code == 422

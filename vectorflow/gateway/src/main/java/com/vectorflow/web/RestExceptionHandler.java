@@ -1,9 +1,11 @@
 package com.vectorflow.web;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.vectorflow.exception.GatewayException;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
+import org.springframework.http.MediaType;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -11,15 +13,25 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
-/** JSON errors ({"error": "..."}) for the REST endpoints, mirroring the GraphQL error classifications. */
+/**
+ * JSON errors ({"error": "..."}) for the REST endpoints, mirroring the GraphQL error classifications.
+ *
+ * <p>The body is written directly rather than through content negotiation: a client that
+ * asked for {@code text/event-stream} (the streaming ask endpoint) must still receive a
+ * readable 400/401/403 instead of a masked "not acceptable" error.
+ */
 @RestControllerAdvice(basePackageClasses = RestExceptionHandler.class)
 @Slf4j
 public class RestExceptionHandler {
 
+    private static final ObjectMapper JSON = new ObjectMapper();
+
     @ExceptionHandler(GatewayException.class)
-    ResponseEntity<Map<String, String>> gateway(GatewayException e) {
+    void gateway(GatewayException e, HttpServletResponse response) throws IOException {
         HttpStatus status = switch (e.getErrorType()) {
             case BAD_REQUEST -> HttpStatus.BAD_REQUEST;
             case UNAUTHORIZED -> HttpStatus.UNAUTHORIZED;
@@ -30,26 +42,41 @@ public class RestExceptionHandler {
         if (status == HttpStatus.BAD_GATEWAY) {
             log.error("Upstream failure: {}", e.getMessage(), e.getCause());
         }
-        return error(status, e.getMessage());
+        write(response, status, e.getMessage());
     }
 
     @ExceptionHandler(AccessDeniedException.class)
-    ResponseEntity<Map<String, String>> accessDenied(AccessDeniedException e) {
+    void accessDenied(AccessDeniedException e, HttpServletResponse response) throws IOException {
         boolean anonymous = e.getMessage() != null && e.getMessage().startsWith("Authentication required");
-        return error(anonymous ? HttpStatus.UNAUTHORIZED : HttpStatus.FORBIDDEN, e.getMessage());
+        write(response, anonymous ? HttpStatus.UNAUTHORIZED : HttpStatus.FORBIDDEN, e.getMessage());
     }
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
-    ResponseEntity<Map<String, String>> tooLarge(MaxUploadSizeExceededException e) {
-        return error(HttpStatus.PAYLOAD_TOO_LARGE, "File is too large (max 20 MB)");
+    void tooLarge(MaxUploadSizeExceededException e, HttpServletResponse response) throws IOException {
+        write(response, HttpStatus.PAYLOAD_TOO_LARGE, "File is too large (max 20 MB)");
     }
 
     @ExceptionHandler({MissingServletRequestPartException.class, MissingServletRequestParameterException.class})
-    ResponseEntity<Map<String, String>> missing(Exception e) {
-        return error(HttpStatus.BAD_REQUEST, "No file was uploaded");
+    void missing(Exception e, HttpServletResponse response) throws IOException {
+        write(response, HttpStatus.BAD_REQUEST, "No file was uploaded");
     }
 
-    private static ResponseEntity<Map<String, String>> error(HttpStatus status, String message) {
-        return ResponseEntity.status(status).body(Map.of("error", message == null ? status.getReasonPhrase() : message));
+    @ExceptionHandler(RateLimitExceededException.class)
+    void rateLimited(RateLimitExceededException e, HttpServletResponse response) throws IOException {
+        response.setHeader("Retry-After", String.valueOf(e.getRetryAfterSeconds()));
+        write(response, HttpStatus.TOO_MANY_REQUESTS, e.getMessage());
+    }
+
+    static void write(HttpServletResponse response, HttpStatus status, String message) throws IOException {
+        if (response.isCommitted()) {
+            return;
+        }
+        response.resetBuffer();
+        response.setStatus(status.value());
+        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        response.getWriter().write(JSON.writeValueAsString(
+                Map.of("error", message == null ? status.getReasonPhrase() : message)));
+        response.getWriter().flush();
     }
 }

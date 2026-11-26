@@ -68,7 +68,7 @@ export default function AuthScreen({ onAuthenticated }: Props) {
               onChange={(e) => setPassword(e.target.value)}
             />
           </label>
-          {mode === "register" && <p className="hint">At least 8 characters. New accounts can search and ask; an admin can grant upload rights.</p>}
+          {mode === "register" && <p className="hint">At least 8 characters, with a letter and a number. New accounts can search and ask; an admin can grant upload rights.</p>}
           {error && <div className="alert error">{error}</div>}
           <button className="btn primary" type="submit" disabled={busy}>
             {busy ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}

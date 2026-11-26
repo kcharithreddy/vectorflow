@@ -6,6 +6,7 @@ import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -13,6 +14,7 @@ import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.Optional;
+import java.util.UUID;
 
 @Component
 @Slf4j
@@ -20,17 +22,26 @@ public class JwtTokenProvider {
 
     static final String DEFAULT_SECRET = "vectorflow-super-secret-key-change-in-production";
     private static final int MIN_SECRET_BYTES = 32; // 256 bits, required for HS256
+    static final String ISSUER = "vectorflow-gateway";
 
     private final String jwtSecret;
     private final long jwtExpirationMs;
+    private final boolean strict;
     private SecretKey key;
 
+    @Autowired
     public JwtTokenProvider(
             @Value("${app.jwt.secret}") String jwtSecret,
-            @Value("${app.jwt.expiration}") long jwtExpirationMs
+            @Value("${app.jwt.expiration}") long jwtExpirationMs,
+            @Value("${app.security.strict:false}") boolean strict
     ) {
         this.jwtSecret = jwtSecret;
         this.jwtExpirationMs = jwtExpirationMs;
+        this.strict = strict;
+    }
+
+    public JwtTokenProvider(String jwtSecret, long jwtExpirationMs) {
+        this(jwtSecret, jwtExpirationMs, false);
     }
 
     @PostConstruct
@@ -41,6 +52,9 @@ public class JwtTokenProvider {
                             + "Generate one with: openssl rand -base64 48");
         }
         if (DEFAULT_SECRET.equals(jwtSecret)) {
+            if (strict) {
+                throw new IllegalStateException("SECURITY_STRICT is on: refusing to start with the default JWT_SECRET");
+            }
             log.warn("Using the default JWT secret - set JWT_SECRET before deploying anywhere public!");
         }
         this.key = Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
@@ -50,6 +64,8 @@ public class JwtTokenProvider {
     public String generateToken(String email, String role) {
         Date now = new Date();
         return Jwts.builder()
+                .id(UUID.randomUUID().toString())
+                .issuer(ISSUER)
                 .subject(email)
                 .claim("role", role)
                 .issuedAt(now)
@@ -61,7 +77,8 @@ public class JwtTokenProvider {
     /** Parse and verify a token; empty if it is malformed, tampered with or expired. */
     public Optional<Claims> parse(String token) {
         try {
-            return Optional.of(Jwts.parser().verifyWith(key).build().parseSignedClaims(token).getPayload());
+            return Optional.of(Jwts.parser().verifyWith(key).requireIssuer(ISSUER).build()
+                    .parseSignedClaims(token).getPayload());
         } catch (JwtException | IllegalArgumentException e) {
             log.debug("Rejected JWT: {}", e.getMessage());
             return Optional.empty();

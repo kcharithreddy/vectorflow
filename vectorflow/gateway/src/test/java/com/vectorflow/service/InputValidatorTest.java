@@ -24,7 +24,16 @@ class InputValidatorTest {
     void passwordLengthBounds() {
         assertThatThrownBy(() -> InputValidator.validatePassword("short")).isInstanceOf(GatewayException.class);
         assertThatThrownBy(() -> InputValidator.validatePassword("x".repeat(73))).isInstanceOf(GatewayException.class);
-        InputValidator.validatePassword("longenough");
+        InputValidator.validatePassword("longenough1");
+    }
+
+    @Test
+    void passwordPolicy() {
+        assertThatThrownBy(() -> InputValidator.validatePassword("onlyletters")).hasMessageContaining("letter and one number");
+        assertThatThrownBy(() -> InputValidator.validatePassword("1234567890")).hasMessageContaining("letter and one number");
+        assertThatThrownBy(() -> InputValidator.validatePassword("Password123")).hasMessageContaining("too common");
+        assertThatThrownBy(() -> InputValidator.validatePassword("charith2026", "charith@example.com")).hasMessageContaining("email name");
+        InputValidator.validatePassword("blue-river-42", "charith@example.com");
     }
 
     @Test

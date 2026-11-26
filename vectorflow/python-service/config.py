@@ -54,12 +54,23 @@ class Settings(BaseSettings):
     # Security: shared secret the gateway sends in X-Internal-API-Key.
     # Leave empty to disable (local development only).
     internal_api_key: str = ""
+    # true = refuse to start without a real INTERNAL_API_KEY (use for anything public)
+    security_strict: bool = False
 
     # CORS
     cors_allowed_origins: str = "http://localhost:3000,http://localhost:8080"
 
     # Logging
     log_level: str = "INFO"
+
+    def security_problems(self) -> List[str]:
+        """Settings that are unsafe for a public deployment."""
+        problems = []
+        if not self.internal_api_key or self.internal_api_key.startswith("change-me"):
+            problems.append("INTERNAL_API_KEY is empty or the default value")
+        if "*" in self.cors_origins:
+            problems.append("CORS_ALLOWED_ORIGINS must not contain '*'")
+        return problems
 
     @property
     def cors_origins(self) -> List[str]:

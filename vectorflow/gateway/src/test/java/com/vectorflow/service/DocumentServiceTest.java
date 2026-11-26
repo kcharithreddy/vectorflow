@@ -35,7 +35,7 @@ class DocumentServiceTest {
         repo = mock(DocumentRepository.class);
         when(repo.save(any(Document.class))).thenAnswer(inv -> inv.getArgument(0));
         when(repo.saveAll(anyList())).thenAnswer(inv -> inv.getArgument(0));
-        service = new DocumentService(vectors, repo);
+        service = new DocumentService(vectors, repo, new com.vectorflow.audit.AuditLog());
         editor = User.builder().id(UUID.randomUUID()).email("e@x.io").role(Role.EDITOR).build();
     }
 

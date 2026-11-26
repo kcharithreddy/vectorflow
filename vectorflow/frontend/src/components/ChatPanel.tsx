@@ -5,7 +5,7 @@ type Mode = "ask" | "search";
 
 type Message =
   | { id: number; role: "user"; text: string; mode: Mode }
-  | { id: number; role: "answer"; result: AskResult }
+  | { id: number; role: "answer"; result: AskResult; streaming?: boolean }
   | { id: number; role: "results"; hits: SearchHit[]; query: string }
   | { id: number; role: "error"; text: string };
 
@@ -39,8 +39,19 @@ export default function ChatPanel({ canEdit, onError }: Props) {
     setBusy(true);
     try {
       if (mode === "ask") {
-        const result = await api.ask(q, 5, filters);
-        setMessages((m) => [...m, { id: nextId++, role: "answer", result }]);
+        // Stream the answer: show text as it arrives, sources/confidence at the end.
+        const id = nextId++;
+        setMessages((m) => [...m, { id, role: "answer", streaming: true, result: { answer: "", confidence: 0, sources: [] } }]);
+        const update = (fn: (r: AskResult) => AskResult, streaming = true) =>
+          setMessages((m) => m.map((msg) => (msg.id === id && msg.role === "answer" ? { ...msg, streaming, result: fn(msg.result) } : msg)));
+        try {
+          const final = await api.askStream(q, (text) => update((r) => ({ ...r, answer: r.answer + text })), { filters });
+          update(() => final, false);
+        } catch (err) {
+          setMessages((m) => m.filter((msg) => msg.id !== id || (msg.role === "answer" && msg.result.answer)));
+          update((r) => r, false);
+          throw err;
+        }
       } else {
         const hits = await api.search(q, 8, filters);
         setMessages((m) => [...m, { id: nextId++, role: "results", hits, query: q }]);
@@ -85,7 +96,7 @@ export default function ChatPanel({ canEdit, onError }: Props) {
         ) : (
           messages.map((m) => <MessageView key={m.id} message={m} />)
         )}
-        {busy && (
+        {busy && !(messages.length && messages[messages.length - 1].role === "answer") && (
           <div className="msg assistant">
             <div className="bubble typing" aria-label="Thinking">
               <span />
@@ -145,7 +156,7 @@ function MessageView({ message }: { message: Message }) {
         </div>
       );
     case "answer":
-      return <AnswerView id={message.id} result={message.result} />;
+      return <AnswerView id={message.id} result={message.result} streaming={!!message.streaming} />;
     case "results":
       return (
         <div className="msg assistant">
@@ -177,7 +188,7 @@ function MessageView({ message }: { message: Message }) {
   }
 }
 
-function AnswerView({ id, result }: { id: number; result: AskResult }) {
+function AnswerView({ id, result, streaming }: { id: number; result: AskResult; streaming: boolean }) {
   const [highlight, setHighlight] = useState<number | null>(null);
   const sourceId = (n: number) => `src-${id}-${n}`;
 
@@ -207,8 +218,11 @@ function AnswerView({ id, result }: { id: number; result: AskResult }) {
   return (
     <div className="msg assistant">
       <div className="bubble wide">
-        <div className="answer">{renderWithCitations(result.answer, result.sources.length, focusSource)}</div>
-        {result.sources.length > 0 && (
+        <div className="answer">
+          {renderWithCitations(result.answer, result.sources.length, focusSource)}
+          {streaming && <span className="cursor" aria-hidden />}
+        </div>
+        {!streaming && result.sources.length > 0 && (
           <>
             <div className="answer-meta">
               <span className="muted small">Confidence</span>

@@ -24,6 +24,7 @@ class PythonServiceClientTest {
     private final AtomicReference<String> seenKey = new AtomicReference<>();
     private volatile int status = 200;
     private volatile String body = "{}";
+    private volatile String contentType = "application/json";
     private final AtomicReference<String> seenContentType = new AtomicReference<>();
     private final AtomicReference<String> seenBody = new AtomicReference<>();
 
@@ -35,7 +36,7 @@ class PythonServiceClientTest {
             seenContentType.set(exchange.getRequestHeaders().getFirst("Content-Type"));
             seenBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.ISO_8859_1));
             byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.getResponseHeaders().add("Content-Type", contentType);
             exchange.sendResponseHeaders(status, bytes.length);
             exchange.getResponseBody().write(bytes);
             exchange.close();
@@ -51,7 +52,7 @@ class PythonServiceClientTest {
     private PythonServiceClient client(String key) {
         return new PythonServiceClient(WebClient.builder(),
                 "http://127.0.0.1:" + server.getAddress().getPort(), key,
-                Duration.ofSeconds(2), Duration.ofSeconds(5));
+                Duration.ofSeconds(2), Duration.ofSeconds(5), false);
     }
 
     @Test
@@ -118,10 +119,43 @@ class PythonServiceClientTest {
     }
 
     @Test
+    void askStreamRelaysServerSentEvents() {
+        body = "event: sources\ndata: {\"sources\": []}\n\n"
+                + "event: delta\ndata: {\"text\": \"Hi\"}\n\n"
+                + "event: done\ndata: {\"confidence\": 0.9, \"sources\": []}\n\n";
+        contentType = "text/event-stream";
+        var events = client("k").askStream("q", 3, null).collectList().block();
+        assertThat(events).extracting(e -> e.event()).containsExactly("sources", "delta", "done");
+        assertThat(events.get(1).data()).isEqualTo("{\"text\": \"Hi\"}");
+        assertThat(seenKey.get()).isEqualTo("k");
+    }
+
+    @Test
+    void askStreamTurnsHttpErrorsIntoErrorEvent() {
+        status = 422;
+        body = "{\"detail\":[{\"loc\":[\"body\",\"question\"],\"msg\":\"too long\"}]}";
+        var events = client("").askStream("q", 3, null).collectList().block();
+        assertThat(events).hasSize(1);
+        assertThat(events.get(0).event()).isEqualTo("error");
+        assertThat(events.get(0).data()).contains("Invalid question: too long");
+    }
+
+    @Test
+    void strictModeRequiresARealInternalKey() {
+        for (String key : new String[]{"", "change-me-internal-api-key"}) {
+            assertThatThrownBy(() -> new PythonServiceClient(WebClient.builder(), "http://x", key,
+                    Duration.ofSeconds(1), Duration.ofSeconds(1), true)).hasMessageContaining("INTERNAL_API_KEY");
+        }
+        new PythonServiceClient(WebClient.builder(), "http://x", "a-real-random-key", Duration.ofSeconds(1), Duration.ofSeconds(1), true);
+    }
+
+    @Test
     void unreachableServiceGivesFriendlyError() {
         PythonServiceClient c = new PythonServiceClient(WebClient.builder(), "http://127.0.0.1:1", "",
-                Duration.ofSeconds(1), Duration.ofSeconds(1));
+                Duration.ofSeconds(1), Duration.ofSeconds(1), false);
         assertThatThrownBy(() -> c.search("q", 5, null, null)).hasMessageContaining("unavailable");
+        var events = c.askStream("q", 3, null).collectList().block();
+        assertThat(events.get(0).data()).contains("unavailable");
         assertThat(c.healthCheck()).isFalse();
     }
 }

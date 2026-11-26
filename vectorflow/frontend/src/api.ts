@@ -223,6 +223,82 @@ export const api = {
     return d.ask;
   },
 
+  /**
+   * Streaming ask: calls onDelta with answer text as it is generated, then
+   * resolves with the final result (confidence + sources to show).
+   */
+  async askStream(
+    question: string,
+    onDelta: (text: string) => void,
+    opts: { maxSources?: number; filters?: Filters; signal?: AbortSignal } = {},
+  ): Promise<AskResult> {
+    const token = getToken();
+    const f = cleanFilters(opts.filters);
+    let res: Response;
+    try {
+      res = await fetch("/api/ask/stream", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream, application/json", // JSON for errors (401/400)
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ question, maxSources: opts.maxSources ?? 5, category: f?.category, tags: f?.tags }),
+        signal: opts.signal,
+      });
+    } catch {
+      throw new ApiError("Cannot reach the VectorFlow gateway. Is it running?");
+    }
+    if (!res.ok || !res.body) {
+      let message = `Request failed (HTTP ${res.status})`;
+      try {
+        message = (await res.json()).error ?? message;
+      } catch {
+        /* not JSON */
+      }
+      throw new ApiError(message, res.status === 401 ? "UNAUTHORIZED" : undefined);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let answer = "";
+    let result: AskResult | null = null;
+
+    const handle = (block: string) => {
+      let event = "message";
+      const data: string[] = [];
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event:")) event = line.slice(6).trim();
+        else if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""));
+      }
+      if (!data.length) return;
+      const payload = JSON.parse(data.join("\n"));
+      if (event === "delta") {
+        answer += payload.text;
+        onDelta(payload.text);
+      } else if (event === "done") {
+        result = { answer: answer.trim(), confidence: payload.confidence, sources: payload.sources };
+      } else if (event === "error") {
+        throw new ApiError(payload.message);
+      }
+    };
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+      let sep: number;
+      while ((sep = buffer.indexOf("\n\n")) !== -1) {
+        handle(buffer.slice(0, sep));
+        buffer = buffer.slice(sep + 2);
+      }
+    }
+    if (buffer.trim()) handle(buffer);
+    if (!result) throw new ApiError("The answer stream ended unexpectedly.");
+    return result;
+  },
+
   async search(query: string, limit = 8, filters?: Filters) {
     const d = await gql<{ search: { results: SearchHit[] } }>(
       `query($q:String!,$l:Int,$f:FilterInput){ search(query:$q,limit:$l,filters:$f){

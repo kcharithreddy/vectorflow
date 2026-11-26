@@ -112,3 +112,26 @@ def test_internal_api_key_enforced(client):
         assert client.get("/health").status_code == 200  # health stays open
     finally:
         get_settings.cache_clear()
+
+
+def test_security_problems_and_strict_mode():
+    import asyncio
+
+    import main
+    from config import Settings
+
+    weak = Settings(internal_api_key="change-me-internal-api-key", cors_allowed_origins="*", _env_file=None)
+    assert len(weak.security_problems()) == 2
+    assert Settings(internal_api_key="a-long-random-value", _env_file=None).security_problems() == []
+
+    get_settings().security_strict = True
+    get_settings().internal_api_key = ""
+    try:
+        async def start():
+            async with main.lifespan(main.app):
+                pass
+        import pytest
+        with pytest.raises(RuntimeError, match="SECURITY_STRICT"):
+            asyncio.run(start())
+    finally:
+        get_settings.cache_clear()

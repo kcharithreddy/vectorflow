@@ -9,6 +9,8 @@ spring:
       path: /graphiql
     schema:
       locations: classpath:graphql/
+      introspection:
+        enabled: ${GRAPHQL_INTROSPECTION:true}
       printer:
         enabled: true   # GET /graphql/schema
 
@@ -33,6 +35,10 @@ spring:
 
   cache:
     type: redis
+
+  mvc:
+    async:
+      request-timeout: 180s   # streaming answers
 
   servlet:
     multipart:
@@ -78,7 +84,20 @@ app:
   cache:
     search-ttl: ${SEARCH_CACHE_TTL:PT5M}
     ask-ttl: ${ASK_CACHE_TTL:PT10M}
+  security:
+    # true = refuse to start with default secrets (use for anything public)
+    strict: ${SECURITY_STRICT:false}
+  rate-limit:
+    enabled: ${RATE_LIMIT_ENABLED:true}
+    ask-per-minute: ${RATE_LIMIT_ASK_PER_MINUTE:30}
+    uploads-per-hour: ${RATE_LIMIT_UPLOADS_PER_HOUR:60}
+    login-failures-per-15-min: ${RATE_LIMIT_LOGIN_FAILURES:10}
+    registrations-per-hour: ${RATE_LIMIT_REGISTRATIONS_PER_HOUR:10}
+  graphql:
+    max-depth: 10
+    max-complexity: 300
 
 logging:
   level:
     com.vectorflow: ${LOG_LEVEL:INFO}
+    AUDIT: INFO

@@ -23,6 +23,29 @@ class JwtTokenProviderTest {
     }
 
     @Test
+    void tokensCarryIssuerAndUniqueId() {
+        JwtTokenProvider p = provider("0123456789abcdef0123456789abcdef", 60_000);
+        var a = p.parse(p.generateToken("a@b.co", "VIEWER")).orElseThrow();
+        var b = p.parse(p.generateToken("a@b.co", "VIEWER")).orElseThrow();
+        assertThat(a.getIssuer()).isEqualTo(JwtTokenProvider.ISSUER);
+        assertThat(a.getId()).isNotEqualTo(b.getId());
+    }
+
+    @Test
+    void rejectsTokenFromAnotherIssuer() {
+        String secret = "0123456789abcdef0123456789abcdef";
+        String foreign = io.jsonwebtoken.Jwts.builder().subject("a@b.co").issuer("someone-else")
+                .signWith(io.jsonwebtoken.security.Keys.hmacShaKeyFor(secret.getBytes())).compact();
+        assertThat(provider(secret, 60_000).validateToken(foreign)).isFalse();
+    }
+
+    @Test
+    void strictModeRejectsDefaultSecret() {
+        JwtTokenProvider p = new JwtTokenProvider(JwtTokenProvider.DEFAULT_SECRET, 1000, true);
+        assertThatThrownBy(p::init).hasMessageContaining("SECURITY_STRICT");
+    }
+
+    @Test
     void rejectsShortSecret() {
         assertThatThrownBy(() -> provider("too-short", 1000)).isInstanceOf(IllegalStateException.class);
     }

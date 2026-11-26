@@ -3,7 +3,7 @@
 import logging
 import math
 from functools import lru_cache
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 import openai
 from openai import AsyncOpenAI
@@ -112,6 +112,66 @@ Rules:
             "confidence": confidence,
         }
 
+    async def ask_stream_async(
+        self,
+        question: str,
+        max_sources: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """Streaming RAG pipeline.
+
+        Yields events in order:
+          {"event": "sources", "data": {"sources": [...]}}   retrieved passages (before generation)
+          {"event": "delta",   "data": {"text": "..."}}        answer tokens as they arrive
+          {"event": "done",    "data": {"confidence": c, "sources": [...]}}  final cited sources
+        """
+        results = await self.retrieve_context_async(question, max_sources, filters)
+        if not results:
+            yield {"event": "delta", "data": {"text": NO_CONTEXT_ANSWER}}
+            yield {"event": "done", "data": {"confidence": 0.0, "sources": []}}
+            return
+
+        sources = self.build_sources(results)
+        yield {"event": "sources", "data": {"sources": sources}}
+
+        request = {
+            "model": self.model,
+            "messages": self.build_messages(question, self.format_context(results)),
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "stream": True,
+        }
+        stream = None
+        if self._logprobs_supported:
+            try:
+                stream = await self.client.chat.completions.create(**request, logprobs=True)
+            except openai.BadRequestError:
+                logger.warning("Model %s rejected logprobs; using heuristic confidence", self.model)
+                self._logprobs_supported = False
+        if stream is None:
+            stream = await self.client.chat.completions.create(**request)
+
+        parts: List[str] = []
+        logprobs: List[float] = []
+        async for chunk in stream:
+            if not chunk.choices:
+                continue
+            choice = chunk.choices[0]
+            text = getattr(choice.delta, "content", None)
+            if text:
+                parts.append(text)
+                yield {"event": "delta", "data": {"text": text}}
+            lp = getattr(choice, "logprobs", None)
+            if lp is not None and getattr(lp, "content", None):
+                logprobs.extend(t.logprob for t in lp.content)
+
+        answer = "".join(parts).strip()
+        confidence = self.confidence_from_logprobs(logprobs, answer)
+        if self.is_refusal(answer):
+            yield {"event": "done", "data": {"confidence": min(confidence, 0.1), "sources": []}}
+        else:
+            yield {"event": "done", "data": {"confidence": confidence, "sources": sources}}
+
     # ------------------------------------------------------------------
     # Pure helpers
     # ------------------------------------------------------------------
@@ -156,8 +216,11 @@ Rules:
         choice = response.choices[0]
         logprobs = getattr(choice, "logprobs", None)
         content = getattr(logprobs, "content", None) if logprobs else None
-        if content:
-            values = [t.logprob for t in content]
+        return cls.confidence_from_logprobs([t.logprob for t in content] if content else [], answer)
+
+    @classmethod
+    def confidence_from_logprobs(cls, values: List[float], answer: str) -> float:
+        if values:
             confidence = math.exp(sum(values) / len(values))
         else:
             confidence = cls.heuristic_confidence(answer)

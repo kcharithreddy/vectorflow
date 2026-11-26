@@ -4,6 +4,7 @@ import com.vectorflow.graphql.GraphQlTypes.*;
 import com.vectorflow.exception.GatewayException;
 import com.vectorflow.model.Document;
 import com.vectorflow.model.User;
+import com.vectorflow.ratelimit.RateLimiter;
 import com.vectorflow.security.GraphQlAuthGuard;
 import com.vectorflow.service.DocumentService;
 import com.vectorflow.service.InputValidator;
@@ -25,6 +26,7 @@ public class QueryResolver {
     private final VectorSearchService vectorSearchService;
     private final DocumentService documentService;
     private final GraphQlAuthGuard authGuard;
+    private final RateLimiter rateLimiter;
 
     /** Semantic search over all ingested documents. */
     @QueryMapping
@@ -34,8 +36,9 @@ public class QueryResolver {
             @Argument FilterInput filters,
             @Argument Double minScore
     ) {
-        authGuard.requireAuth();
+        User user = authGuard.requireAuth();
         String q = InputValidator.requireText(query, "query", 8000);
+        rateLimiter.checkAsk(user.getId().toString());
         int l = InputValidator.range(limit, 5, 1, InputValidator.MAX_SEARCH_LIMIT, "limit");
         if (minScore != null && (minScore < 0 || minScore > 1)) {
             throw GatewayException.badRequest("minScore must be between 0 and 1");
@@ -58,8 +61,9 @@ public class QueryResolver {
             @Argument Integer maxSources,
             @Argument FilterInput filters
     ) {
-        authGuard.requireAuth();
+        User user = authGuard.requireAuth();
         String q = InputValidator.requireText(question, "question", 4000);
+        rateLimiter.checkAsk(user.getId().toString());
         int n = InputValidator.range(maxSources, 5, 1, InputValidator.MAX_SOURCES, "maxSources");
         log.info("GraphQL ask: '{}' (maxSources={})", q, n);
 

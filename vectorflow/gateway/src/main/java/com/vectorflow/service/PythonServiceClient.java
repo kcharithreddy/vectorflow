@@ -10,10 +10,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.cache.annotation.Caching;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.graphql.execution.ErrorType;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.MultipartBodyBuilder;
+import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
@@ -21,6 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
+import reactor.core.publisher.Flux;
 import reactor.netty.http.client.HttpClient;
 
 import java.time.Duration;
@@ -49,8 +52,12 @@ public class PythonServiceClient implements VectorSearchService {
             @Value("${app.python-service.url}") String pythonServiceUrl,
             @Value("${app.python-service.api-key:}") String internalApiKey,
             @Value("${app.python-service.connect-timeout:PT5S}") Duration connectTimeout,
-            @Value("${app.python-service.response-timeout:PT180S}") Duration responseTimeout
+            @Value("${app.python-service.response-timeout:PT180S}") Duration responseTimeout,
+            @Value("${app.security.strict:false}") boolean strict
     ) {
+        if (strict && (internalApiKey == null || internalApiKey.isBlank() || internalApiKey.startsWith("change-me"))) {
+            throw new IllegalStateException("SECURITY_STRICT is on: set a real INTERNAL_API_KEY");
+        }
         HttpClient httpClient = HttpClient.create()
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, (int) connectTimeout.toMillis())
                 .responseTimeout(responseTimeout);
@@ -143,6 +150,50 @@ public class PythonServiceClient implements VectorSearchService {
                 .retrieve()
                 .bodyToMono(AskResult.class)
                 .block());
+    }
+
+    @Override
+    public Flux<ServerSentEvent<String>> askStream(String question, int maxSources, Map<String, Object> filters) {
+        Map<String, Object> request = new HashMap<>();
+        request.put("question", question);
+        request.put("max_sources", maxSources);
+        if (filters != null && !filters.isEmpty()) {
+            request.put("filters", filters);
+        }
+        return webClient.post()
+                .uri("/api/ask/stream")
+                .accept(MediaType.TEXT_EVENT_STREAM)
+                .bodyValue(request)
+                .retrieve()
+                .bodyToFlux(SSE_TYPE)
+                .filter(e -> e.event() != null && e.data() != null)
+                .map(e -> ServerSentEvent.<String>builder().event(e.event()).data(e.data()).build())
+                .onErrorResume(e -> Flux.just(errorEvent(streamErrorMessage(e))));
+    }
+
+    private static final ParameterizedTypeReference<ServerSentEvent<String>> SSE_TYPE = new ParameterizedTypeReference<>() {};
+
+    private String streamErrorMessage(Throwable e) {
+        if (e instanceof WebClientResponseException wcre) {
+            if (wcre.getStatusCode().value() == 401) {
+                return "Gateway is not authorized to call the AI service (check INTERNAL_API_KEY)";
+            }
+            return extractDetail(wcre);
+        }
+        if (e instanceof WebClientRequestException) {
+            return "AI service is unavailable - please try again shortly";
+        }
+        log.error("Streaming ask failed", e);
+        return "Failed to generate answer";
+    }
+
+    private ServerSentEvent<String> errorEvent(String message) {
+        try {
+            return ServerSentEvent.<String>builder().event("error")
+                    .data(objectMapper.writeValueAsString(Map.of("message", message))).build();
+        } catch (Exception ex) {
+            return ServerSentEvent.<String>builder().event("error").data("{\"message\":\"Failed to generate answer\"}").build();
+        }
     }
 
     @Override

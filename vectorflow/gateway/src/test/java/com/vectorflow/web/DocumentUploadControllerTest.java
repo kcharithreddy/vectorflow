@@ -33,7 +33,7 @@ class DocumentUploadControllerTest {
         guard = mock(GraphQlAuthGuard.class);
         vectors = mock(VectorSearchService.class);
         documents = mock(DocumentService.class);
-        controller = new DocumentUploadController(guard, vectors, documents);
+        controller = new DocumentUploadController(guard, vectors, documents, mock(com.vectorflow.ratelimit.RateLimiter.class));
     }
 
     @Test

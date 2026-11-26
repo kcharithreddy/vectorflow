@@ -1,6 +1,8 @@
 package com.vectorflow.service;
 
 import com.vectorflow.model.dto.Metadata;
+import org.springframework.http.codec.ServerSentEvent;
+import reactor.core.publisher.Flux;
 
 import java.io.Serializable;
 import java.util.List;
@@ -24,6 +26,12 @@ public interface VectorSearchService {
     SearchResponse search(String query, int limit, Map<String, Object> filters, Double minScore);
 
     AskResult ask(String question, int maxSources, Map<String, Object> filters);
+
+    /**
+     * Streams an answer as Server-Sent Events: {@code sources}, then {@code delta}s, then {@code done}.
+     * Failures are delivered as an {@code error} event rather than breaking the stream.
+     */
+    Flux<ServerSentEvent<String>> askStream(String question, int maxSources, Map<String, Object> filters);
 
     /** @return true if the document existed in the vector store and was deleted, false if it was not found */
     boolean deleteDocument(String documentId);

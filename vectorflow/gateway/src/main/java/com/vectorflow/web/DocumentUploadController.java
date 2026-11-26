@@ -4,6 +4,7 @@ import com.vectorflow.exception.GatewayException;
 import com.vectorflow.model.Role;
 import com.vectorflow.model.User;
 import com.vectorflow.model.dto.Metadata;
+import com.vectorflow.ratelimit.RateLimiter;
 import com.vectorflow.security.GraphQlAuthGuard;
 import com.vectorflow.service.DocumentService;
 import com.vectorflow.service.InputValidator;
@@ -36,6 +37,7 @@ public class DocumentUploadController {
     private final GraphQlAuthGuard authGuard;
     private final VectorSearchService vectorSearchService;
     private final DocumentService documentService;
+    private final RateLimiter rateLimiter;
 
     public record UploadResponse(
             String documentId,
@@ -56,6 +58,7 @@ public class DocumentUploadController {
             @RequestParam(value = "tags", required = false) String tags
     ) throws IOException {
         User user = authGuard.requireAnyRole(Role.EDITOR, Role.ADMIN);
+        rateLimiter.checkUpload(user.getId().toString());
         if (file.isEmpty()) {
             throw GatewayException.badRequest("The file is empty");
         }

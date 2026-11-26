@@ -31,12 +31,39 @@ public final class InputValidator {
         return normalized;
     }
 
+    /** Very common passwords that are rejected outright (a small sample of breach lists). */
+    private static final java.util.Set<String> COMMON_PASSWORDS = java.util.Set.of(
+            "password", "password1", "password123", "12345678", "123456789", "1234567890", "qwerty123",
+            "qwertyuiop", "iloveyou", "11111111", "00000000", "abc12345", "letmein1", "welcome1",
+            "admin123", "passw0rd", "football1", "monkey123", "dragon123", "sunshine1");
+
     public static void validatePassword(String password) {
+        validatePassword(password, null);
+    }
+
+    /**
+     * Password policy: 8-72 characters, at least one letter and one digit, not a
+     * well-known password, and not containing the user's email name.
+     */
+    public static void validatePassword(String password, String email) {
         if (password == null || password.length() < MIN_PASSWORD_LENGTH) {
             throw GatewayException.badRequest("Password must be at least " + MIN_PASSWORD_LENGTH + " characters");
         }
         if (password.length() > MAX_PASSWORD_LENGTH) {
             throw GatewayException.badRequest("Password must be at most " + MAX_PASSWORD_LENGTH + " characters");
+        }
+        if (!password.matches(".*\\p{L}.*") || !password.matches(".*\\d.*")) {
+            throw GatewayException.badRequest("Password must contain at least one letter and one number");
+        }
+        String lower = password.toLowerCase(Locale.ROOT);
+        if (COMMON_PASSWORDS.contains(lower)) {
+            throw GatewayException.badRequest("This password is too common - please choose another");
+        }
+        if (email != null) {
+            String name = email.split("@")[0].toLowerCase(Locale.ROOT);
+            if (name.length() >= 4 && lower.contains(name)) {
+                throw GatewayException.badRequest("Password must not contain your email name");
+            }
         }
     }
 

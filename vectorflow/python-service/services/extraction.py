@@ -35,6 +35,7 @@ def extract_text(filename: str, data: bytes) -> ExtractedText:
         )
     if not data:
         raise InvalidRequestError("The file is empty")
+    check_signature(ext, data)
 
     if ext == ".pdf":
         result = _extract_pdf(data)
@@ -49,6 +50,18 @@ def extract_text(filename: str, data: bytes) -> ExtractedText:
         raise InvalidRequestError(f"No readable text found in '{filename}'.{hint}")
     result.text = text
     return result
+
+
+def check_signature(ext: str, data: bytes) -> None:
+    """Reject files whose content doesn't match their extension (e.g. an executable renamed to .pdf)."""
+    head = data[:1024]
+    if ext == ".pdf" and b"%PDF-" not in head:
+        raise InvalidRequestError("This file is not a valid PDF (its content doesn't match the .pdf extension)")
+    if ext == ".docx" and not data.startswith(b"PK\x03\x04"):
+        raise InvalidRequestError("This file is not a valid DOCX (its content doesn't match the .docx extension)")
+    if ext in TEXT_EXTENSIONS and (head.startswith((b"MZ", b"\x7fELF", b"PK\x03\x04", b"%PDF-")) or b"\x00\x00\x00" in head
+                                   and not head.startswith((b"\xff\xfe", b"\xfe\xff"))):
+        raise InvalidRequestError("This file doesn't look like a text file")
 
 
 def _extract_pdf(data: bytes) -> ExtractedText:
