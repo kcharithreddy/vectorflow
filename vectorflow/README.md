@@ -1,8 +1,42 @@
+<div align="center">
+
 # VectorFlow
 
-**Distributed Vector Search & LLM-Orchestrated Retrieval Engine**
+**Ask questions about your documents and get AI answers you can verify.**
 
-A RAG (Retrieval-Augmented Generation) backend that transforms unstructured documents into conversational search by integrating distributed ingestion, vector indexing, and LLM-powered query routing.
+A retrieval-augmented generation (RAG) platform: upload PDFs and Word files, ask in plain language,
+and get answers that stream in word by word with clickable citations to the exact source passages.
+
+[![CI](https://github.com/kcharithreddy/vectorflow/actions/workflows/ci.yml/badge.svg)](https://github.com/kcharithreddy/vectorflow/actions/workflows/ci.yml)
+![Java 17](https://img.shields.io/badge/Java-17-orange)
+![Spring Boot 3.2](https://img.shields.io/badge/Spring%20Boot-3.2-6db33f)
+![Python 3.12](https://img.shields.io/badge/Python-3.12-3776ab)
+![React 18](https://img.shields.io/badge/React-18-61dafb)
+![Qdrant](https://img.shields.io/badge/Vector%20DB-Qdrant-dc244c)
+![Tests](https://img.shields.io/badge/tests-120%20passing-brightgreen)
+
+<img src="docs/images/demo.gif" alt="VectorFlow demo: sign in, ask a question, the answer streams in with a clickable citation" width="860">
+
+<sub>UI demo: sign in → ask → answer streams in → click the [1] citation to see the source.</sub>
+
+</div>
+
+## ✨ Highlights
+
+- **Grounded answers with citations**: every answer cites numbered sources; click [1] to jump to the passage
+- **Streaming responses**: tokens flow from OpenAI → Python → Spring gateway → browser via Server-Sent Events
+- **Honest when it doesn't know**: a relevance threshold skips the LLM for off-topic questions (no hallucination, no cost)
+- **Upload PDF, DOCX, Markdown and text** with drag-and-drop; content-signature checks reject disguised files
+- **Microservices**: Spring Boot GraphQL gateway + FastAPI AI service + React app, 6 containers with Docker Compose
+- **Security in depth**: JWT + roles, login lockout, per-user rate limits, GraphQL depth limits, CSP and security headers, audit log ([SECURITY.md](SECURITY.md))
+- **120 automated tests** (64 Python, 56 Java) + browser end-to-end tests, CI on every push, Dependabot
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/real-openai-answer.png" alt="Real OpenAI answer with a citation"><br><sub><b>Real gpt-4o-mini answer</b> from an uploaded story, citing its source with 84% confidence.</sub></td>
+<td width="50%"><img src="docs/images/upload-dialog.png" alt="Upload dialog"><br><sub><b>Drag-and-drop upload</b>: title from the file name, optional category and tags.</sub></td>
+</tr>
+</table>
 
 ---
 
@@ -495,6 +529,15 @@ query {
 }
 ```
 
+**Streaming answers** (what the web app uses): `POST /api/ask/stream` returns Server-Sent Events:
+`sources` (retrieved passages), then many `delta` events (answer text as it is generated), then `done`
+(confidence and the sources to display). Errors arrive as an `error` event.
+```bash
+curl -N -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+     -d '{"question":"How many vacation days do we get?","maxSources":5}' \
+     http://localhost:8080/api/ask/stream
+```
+
 **Ask with RAG** (`maxSources` 1-10, optional `filters` to scope the sources):
 ```graphql
 query {
@@ -527,6 +570,7 @@ All `/api/*` endpoints require the `X-Internal-API-Key` header when `INTERNAL_AP
 | POST | `/api/extract` | Extract text from an uploaded PDF / DOCX / text file (multipart `file`) |
 | POST | `/api/search` | Similarity search with `filters` (`category`, `tags`, `date_from`, `date_to`) and `min_score` |
 | POST | `/api/ask` | RAG answer with sources |
+| POST | `/api/ask/stream` | Same, streamed as Server-Sent Events (`sources`, `delta`…, `done`) |
 | GET | `/api/documents` | Paginated document list |
 | GET | `/api/documents/{id}` | All chunks of a document |
 | DELETE | `/api/documents/{id}` | Delete a document's chunks (404 if unknown) |
@@ -727,13 +771,21 @@ curl http://localhost:8080/actuator/health
 
 ## 🔒 Security Features
 
-- **JWT authentication** (HS256, 24h expiry, ≥ 256-bit secret enforced at startup)
-- **Role-based access control** (VIEWER / EDITOR / ADMIN) with ownership checks on delete
-- **BCrypt password hashing**, case-insensitive unique emails, uniform login errors
-- **Internal API key** between gateway and Python service; databases bound to localhost in Compose
-- **Input validation** in both the gateway and Pydantic models; size limits on documents and batches
-- **Prompt-injection hardening**: the system prompt treats retrieved sources as untrusted data
-- **No internal error details** leaked to clients; containers run as non-root users
+Defence in depth; full details and a production checklist in **[SECURITY.md](SECURITY.md)**.
+
+- **Edge (nginx)**: only public entry point; per-IP rate limiting; Content-Security-Policy, X-Frame-Options, nosniff, Referrer-Policy and Permissions-Policy headers; server version hidden
+- **Authentication**: BCrypt hashes, JWT (HS256) with issuer check and unique token ids; 32-byte minimum secret
+- **Brute-force protection**: account lockout after 10 failed logins in 15 minutes; registration limit per IP (Redis-backed, works across instances)
+- **Password policy**: letters + numbers, common passwords rejected, must not contain the email name
+- **Authorization**: VIEWER / EDITOR / ADMIN roles read from the DB on every request; ownership checks on delete
+- **Cost protection**: per-user limits on questions (30/min) and uploads (60/h), with `Retry-After`
+- **API hardening**: GraphQL depth (10) and complexity (300) limits; validation on every input; no stack traces to clients
+- **Upload safety**: size limit, extension allow-list and **file-signature checks** (a renamed `.exe` is rejected)
+- **Service-to-service**: internal API key between gateway and AI service; databases bound to localhost
+- **LLM safety**: retrieved text is treated as untrusted (prompt-injection hardening)
+- **Audit log**: logins, failures, lockouts, role changes, uploads and deletes
+- **Production mode**: `SECURITY_STRICT=true` refuses to start with default secrets
+- **Supply chain**: Dependabot updates; non-root containers; pinned images
 
 ---
 
