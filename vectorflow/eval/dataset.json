@@ -1,0 +1,216 @@
+{
+  "description": "VectorFlow evaluation set: questions over the sample corpus (sample-data/*.md and the documents in scripts/bulk_ingest_data.py), each with the document that should be retrieved and key facts the answer must contain (case-insensitive substrings). Unanswerable questions are off-topic and should get an 'I don't know' style answer with no sources.",
+  "answerable": [
+    {
+      "question": "What is a Docker image?",
+      "expected_document": "Docker Containerization Fundamentals",
+      "must_include": [
+        "read-only",
+        "template"
+      ]
+    },
+    {
+      "question": "What is a Docker container?",
+      "expected_document": "Docker Containerization Fundamentals",
+      "must_include": [
+        "instance",
+        "image"
+      ]
+    },
+    {
+      "question": "Which Docker network driver is used for multi-host networking in Swarm?",
+      "expected_document": "Docker Containerization Fundamentals",
+      "must_include": [
+        "overlay"
+      ]
+    },
+    {
+      "question": "What are the three types of Docker storage mounts?",
+      "expected_document": "Docker Containerization Fundamentals",
+      "must_include": [
+        "volume",
+        "bind",
+        "tmpfs"
+      ]
+    },
+    {
+      "question": "Which tool can scan Docker images for vulnerabilities?",
+      "expected_document": "Docker Containerization Fundamentals",
+      "must_include": [
+        "trivy"
+      ]
+    },
+    {
+      "question": "Where is FastAPI's interactive Swagger UI documentation available?",
+      "expected_document": "FastAPI Framework Guide",
+      "must_include": [
+        "/docs"
+      ]
+    },
+    {
+      "question": "Which framework is FastAPI built on top of?",
+      "expected_document": "FastAPI Framework Guide",
+      "must_include": [
+        "starlette"
+      ]
+    },
+    {
+      "question": "What does FastAPI use to define request bodies?",
+      "expected_document": "FastAPI Framework Guide",
+      "must_include": [
+        "pydantic"
+      ]
+    },
+    {
+      "question": "How do you split a FastAPI application into modules?",
+      "expected_document": "FastAPI Framework Guide",
+      "must_include": [
+        "apirouter"
+      ]
+    },
+    {
+      "question": "What programming language is Qdrant written in?",
+      "expected_document": "Qdrant Vector Database Basics",
+      "must_include": [
+        "rust"
+      ]
+    },
+    {
+      "question": "What three things make up a point in Qdrant?",
+      "expected_document": "Qdrant Vector Database Basics",
+      "must_include": [
+        "id",
+        "vector",
+        "payload"
+      ]
+    },
+    {
+      "question": "Which distance metric is best for text embeddings in Qdrant?",
+      "expected_document": "Qdrant Vector Database Basics",
+      "must_include": [
+        "cosine"
+      ]
+    },
+    {
+      "question": "What must all vectors in a Qdrant collection have in common?",
+      "expected_document": "Qdrant Vector Database Basics",
+      "must_include": [
+        "dimension"
+      ]
+    },
+    {
+      "question": "What does asyncio.gather() do?",
+      "expected_document": "Python Async Programming",
+      "must_include": [
+        "concurren"
+      ]
+    },
+    {
+      "question": "Should async Python be used for CPU-bound work?",
+      "expected_document": "Python Async Programming",
+      "must_include": [
+        "multiprocessing"
+      ]
+    },
+    {
+      "question": "Which HTTP status code means a resource was created?",
+      "expected_document": "REST API Design Principles",
+      "must_include": [
+        "201"
+      ]
+    },
+    {
+      "question": "Which HTTP method is used for partial updates in a REST API?",
+      "expected_document": "REST API Design Principles",
+      "must_include": [
+        "patch"
+      ]
+    },
+    {
+      "question": "Which header is used to communicate rate limits in REST APIs?",
+      "expected_document": "REST API Design Principles",
+      "must_include": [
+        "x-ratelimit"
+      ]
+    },
+    {
+      "question": "Which PostgreSQL index types support full-text search?",
+      "expected_document": "PostgreSQL Database Fundamentals",
+      "must_include": [
+        "gin"
+      ]
+    },
+    {
+      "question": "What does VACUUM do in PostgreSQL?",
+      "expected_document": "PostgreSQL Database Fundamentals",
+      "must_include": [
+        "storage"
+      ]
+    },
+    {
+      "question": "Which tool provides connection pooling for PostgreSQL?",
+      "expected_document": "PostgreSQL Database Fundamentals",
+      "must_include": [
+        "pgbouncer"
+      ]
+    },
+    {
+      "question": "How does the cache-aside pattern work?",
+      "expected_document": "Redis Caching Strategies",
+      "must_include": [
+        "miss"
+      ]
+    },
+    {
+      "question": "How does Redis provide high availability with automatic failover?",
+      "expected_document": "Redis Caching Strategies",
+      "must_include": [
+        "sentinel"
+      ]
+    },
+    {
+      "question": "What are the three parts of a JSON Web Token?",
+      "expected_document": "JWT Authentication Explained",
+      "must_include": [
+        "header",
+        "payload",
+        "signature"
+      ]
+    },
+    {
+      "question": "How should clients send a JWT to the server?",
+      "expected_document": "JWT Authentication Explained",
+      "must_include": [
+        "authorization",
+        "bearer"
+      ]
+    },
+    {
+      "question": "How long should a JWT access token be valid?",
+      "expected_document": "JWT Authentication Explained",
+      "must_include": [
+        "15 minutes"
+      ]
+    }
+  ],
+  "unanswerable": [
+    {
+      "question": "What is the capital of France?"
+    },
+    {
+      "question": "Who won the 2018 FIFA World Cup?"
+    },
+    {
+      "question": "How do I bake sourdough bread at home?"
+    },
+    {
+      "question": "Who wrote the novel Pride and Prejudice?"
+    },
+    {
+      "question": "What is the boiling point of water on Mount Everest?"
+    },
+    {
+      "question": "What is Apple's stock price today?"
+    }
+  ]
+}

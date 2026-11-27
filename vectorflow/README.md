@@ -617,6 +617,7 @@ vectorflow/
 │   ├── services/               # embedding (chunking), qdrant, llm (RAG), ingestion, file text extraction
 │   └── tests/                  # pytest suite (runs offline with fakes + in-memory Qdrant)
 │
+├── eval/                       # RAG benchmark: dataset.json + run_eval.py (retrieval, answers, honesty, latency)
 ├── scripts/
 │   ├── init-db.sql             # PostgreSQL schema + dev seed users
 │   └── bulk_ingest_data.py     # Bulk ingestion of sample data
@@ -707,6 +708,20 @@ docker compose restart gateway          # restart a service
 docker compose down                     # stop everything
 docker compose down -v                  # stop and delete all data (re-runs init-db.sql next time)
 ```
+
+---
+
+## 📏 Evaluation
+
+A repeatable benchmark measures retrieval accuracy (hit@1, hit@5, MRR), answer correctness and citations,
+honesty on off-topic questions, and latency, over a fixed set of 32 questions ([eval/](eval/README.md)):
+
+```bash
+python3 eval/run_eval.py      # writes eval/results/latest.md
+```
+
+It uses its own tagged documents, so it never touches your data. Use it to compare chunk sizes, thresholds,
+prompts and models with numbers instead of guesses.
 
 ---
 
