@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { api, type AskResult, type ConversationEvent, type SearchHit } from "../api";
+import { api, type AnswerMode, type AskResult, type ChatOptions, type ConversationEvent, type SearchHit } from "../api";
 import Markdown from "./Markdown";
 
 type Mode = "ask" | "search";
@@ -19,7 +19,36 @@ interface Props {
   onError: (err: unknown) => string;
 }
 
-const EXAMPLES = ["Summarize the main ideas in my documents", "What are the key points I should know?", "Explain this topic simply"];
+const EXAMPLES: Record<AnswerMode, string[]> = {
+  auto: ["Summarize the main ideas in my documents", "Explain how HTTPS works in simple terms", "Write a Python function that reverses a string"],
+  documents: ["Summarize the main ideas in my documents", "What are the key points I should know?", "Explain this topic simply"],
+  general: ["Explain how HTTPS works in simple terms", "Compare SQL and NoSQL databases in a table", "Write a Python function that reverses a string"],
+};
+
+const ANSWER_MODES: { value: AnswerMode; label: string; hint: string }[] = [
+  { value: "auto", label: "Auto", hint: "Uses your documents when they answer the question, otherwise general knowledge" },
+  { value: "documents", label: "My documents", hint: "Answers come only from your documents" },
+  { value: "general", label: "General knowledge", hint: "A general AI assistant; your documents are not used" },
+];
+
+const MODE_KEY = "vectorflow.answerMode";
+const MODEL_KEY = "vectorflow.model";
+
+function load(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function save(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* storage unavailable */
+  }
+}
 
 let nextId = 1;
 
@@ -27,6 +56,12 @@ export default function ChatPanel({ canEdit, conversationId, onConversation, onE
   const [mode, setMode] = useState<Mode>("ask");
   const [input, setInput] = useState("");
   const [category, setCategory] = useState("");
+  const [answerMode, setAnswerMode] = useState<AnswerMode>(() => {
+    const saved = load(MODE_KEY);
+    return saved === "documents" || saved === "general" ? saved : "auto";
+  });
+  const [model, setModel] = useState<string>(() => load(MODEL_KEY) ?? "");
+  const [options, setOptions] = useState<ChatOptions | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -35,6 +70,34 @@ export default function ChatPanel({ canEdit, conversationId, onConversation, onE
   const abortRef = useRef<AbortController | null>(null);
   // The conversation this panel is already showing (so selecting it again doesn't reload mid-stream).
   const shownConversation = useRef<string | null>(null);
+
+  // Which models the server allows (the picker is hidden until this arrives).
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .chatOptions()
+      .then((o) => {
+        if (cancelled) return;
+        setOptions(o);
+        setModel((m) => (o.models.includes(m) ? m : o.default_model));
+      })
+      .catch(() => {
+        /* the server default model is used */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function chooseMode(m: AnswerMode) {
+    setAnswerMode(m);
+    save(MODE_KEY, m);
+  }
+
+  function chooseModel(m: string) {
+    setModel(m);
+    save(MODEL_KEY, m);
+  }
 
   // Load a conversation's history when the selection changes.
   useEffect(() => {
@@ -53,7 +116,11 @@ export default function ChatPanel({ canEdit, conversationId, onConversation, onE
           c.messages.map((m) =>
             m.role === "user"
               ? { id: nextId++, role: "user", text: m.content, mode: "ask" as Mode }
-              : { id: nextId++, role: "answer", result: { answer: m.content, confidence: m.confidence ?? 0, sources: m.sources } },
+              : {
+                  id: nextId++,
+                  role: "answer",
+                  result: { answer: m.content, confidence: m.confidence ?? 0, sources: m.sources, answerType: m.answerType, model: m.model },
+                },
           ),
         );
       })
@@ -90,6 +157,8 @@ export default function ChatPanel({ canEdit, conversationId, onConversation, onE
         signal: controller.signal,
         conversationId: shownConversation.current,
         regenerate,
+        mode: answerMode,
+        model: options ? model : null,
         onConversation: (c) => {
           shownConversation.current = c.id;
           onConversation(c);
@@ -175,12 +244,19 @@ export default function ChatPanel({ canEdit, conversationId, onConversation, onE
           <div className="welcome">
             <h1>What would you like to know?</h1>
             <p className="muted">
-              Ask about your documents. Answers stream in, cite their sources like <span className="cite static">1</span>, and remember the
-              conversation, so you can ask follow-up questions.
-              {canEdit ? " Add documents from the Documents tab." : ""}
+              {answerMode === "general" ? (
+                "Ask me anything. Answers stream in, and I remember the conversation, so you can ask follow-up questions."
+              ) : (
+                <>
+                  Ask anything. Answers from your documents cite their sources like <span className="cite static">1</span>
+                  {answerMode === "auto" ? ", and anything else is answered from general knowledge" : ""}. I remember the conversation, so you
+                  can ask follow-up questions.
+                  {canEdit ? " Add documents from the Documents tab." : ""}
+                </>
+              )}
             </p>
             <div className="examples">
-              {EXAMPLES.map((ex) => (
+              {EXAMPLES[answerMode].map((ex) => (
                 <button key={ex} className="example" onClick={() => send(ex)}>
                   {ex}
                 </button>
@@ -219,6 +295,25 @@ export default function ChatPanel({ canEdit, conversationId, onConversation, onE
               Search
             </button>
           </div>
+          {mode === "ask" && (
+            <select className="picker" value={answerMode} onChange={(e) => chooseMode(e.target.value as AnswerMode)} aria-label="Answer from" title={ANSWER_MODES.find((m) => m.value === answerMode)?.hint}>
+              {ANSWER_MODES.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.value === "auto" ? "✨ " : m.value === "documents" ? "📄 " : "🌐 "}
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          )}
+          {mode === "ask" && options && options.models.length > 1 && (
+            <select className="picker" value={model} onChange={(e) => chooseModel(e.target.value)} aria-label="Model">
+              {options.models.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          )}
           <input className="filter" value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Filter by category (optional)" aria-label="Category filter" />
         </div>
         <div className="composer-row">
@@ -241,7 +336,9 @@ export default function ChatPanel({ canEdit, conversationId, onConversation, onE
             </button>
           )}
         </div>
-        <p className="hint center">Enter to send · Shift+Enter for a new line · Answers come only from your documents</p>
+        <p className="hint center">
+          Enter to send · Shift+Enter for a new line · {mode === "ask" ? ANSWER_MODES.find((m) => m.value === answerMode)?.hint : "Hybrid keyword + meaning search"}
+        </p>
       </form>
     </div>
   );
@@ -361,6 +458,7 @@ function AnswerView({
   return (
     <div className="msg assistant">
       <div className="bubble wide">
+        {!streaming && result.answerType && <AnswerBadge type={result.answerType} model={result.model} />}
         <div className="answer">
           <Markdown text={result.answer} sourceCount={result.sources.length} onCite={focusSource} />
           {streaming && <span className="cursor" aria-hidden />}
@@ -397,6 +495,17 @@ function AnswerView({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function AnswerBadge({ type, model }: { type: "documents" | "general"; model?: string | null }) {
+  return (
+    <div className="answer-badges">
+      <span className={`badge ${type}`} title={type === "documents" ? "Grounded in your documents, with citations" : "Answered from the model's general knowledge, not your documents"}>
+        {type === "documents" ? "📄 From your documents" : "🌐 General knowledge"}
+      </span>
+      {model && <span className="badge model">{model}</span>}
     </div>
   );
 }

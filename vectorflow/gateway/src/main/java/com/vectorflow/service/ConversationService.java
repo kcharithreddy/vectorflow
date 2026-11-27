@@ -76,13 +76,21 @@ public class ConversationService {
     /** Store an assistant answer (complete, or partial if the user pressed Stop). */
     @Transactional
     public void saveAnswer(UUID conversationId, String content, List<Map<String, Object>> sources, Double confidence) {
+        saveAnswer(conversationId, content, sources, confidence, null, null);
+    }
+
+    /** @param answerType "documents" or "general" (which badge the UI shows); @param model the model that answered */
+    @Transactional
+    public void saveAnswer(UUID conversationId, String content, List<Map<String, Object>> sources, Double confidence,
+                           String answerType, String model) {
         if (content == null || content.isBlank()) {
             return;
         }
         conversations.findById(conversationId).ifPresent(conv -> {
             messages.save(ChatMessage.builder()
                     .id(UUID.randomUUID()).conversation(conv).role(ChatMessage.ASSISTANT)
-                    .content(content.strip()).sources(sources).confidence(confidence).build());
+                    .content(content.strip()).sources(sources).confidence(confidence)
+                    .answerType(answerType).model(model).build());
             touch(conv);
         });
     }

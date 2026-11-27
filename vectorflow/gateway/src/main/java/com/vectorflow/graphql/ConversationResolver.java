@@ -34,12 +34,12 @@ public class ConversationResolver {
     }
 
     public record ChatMessageOutput(String id, String role, String content, List<SourceOutput> sources,
-                                    Double confidence, String createdAt) {
+                                    Double confidence, String answerType, String model, String createdAt) {
         static ChatMessageOutput from(ChatMessage m) {
             List<SourceOutput> sources = m.getSources() == null ? List.of() : m.getSources().stream()
                     .map(ChatMessageOutput::source).toList();
             return new ChatMessageOutput(m.getId().toString(), m.getRole(), m.getContent(), sources,
-                    m.getConfidence(), m.getCreatedAt().toString());
+                    m.getConfidence(), m.getAnswerType(), m.getModel(), m.getCreatedAt().toString());
         }
 
         private static SourceOutput source(Map<String, Object> s) {

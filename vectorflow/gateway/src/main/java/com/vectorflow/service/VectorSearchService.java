@@ -32,7 +32,15 @@ public interface VectorSearchService {
      * Failures are delivered as an {@code error} event rather than breaking the stream.
      */
     Flux<ServerSentEvent<String>> askStream(String question, int maxSources, Map<String, Object> filters,
-                                            List<Map<String, String>> history);
+                                            List<Map<String, String>> history, String mode, String model);
+
+    default Flux<ServerSentEvent<String>> askStream(String question, int maxSources, Map<String, Object> filters,
+                                                    List<Map<String, String>> history) {
+        return askStream(question, maxSources, filters, history, null, null);
+    }
+
+    /** Models and answer modes the chat UI may offer (from the AI service). */
+    Map<String, Object> chatOptions();
 
     /** @return true if the document existed in the vector store and was deleted, false if it was not found */
     boolean deleteDocument(String documentId);

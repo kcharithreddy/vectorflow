@@ -129,6 +129,12 @@ class AskRequest(BaseModel):
     max_sources: int = Field(default=5, ge=1, le=10)
     filters: Optional[SearchFilter] = None
     history: List[HistoryMessage] = Field(default_factory=list, max_length=20)
+    mode: Literal["auto", "documents", "general"] = Field(
+        default="documents",
+        description="documents = strictly from your documents; general = general knowledge; "
+                    "auto = documents when they answer the question, otherwise general knowledge.",
+    )
+    model: Optional[str] = Field(default=None, max_length=60, description="One of GET /api/models; default if omitted.")
 
     @field_validator("question")
     @classmethod
@@ -153,6 +159,16 @@ class AskResponse(BaseModel):
     sources: List[Source]
     confidence: float
     question: str
+    answer_type: Literal["documents", "general"] = "documents"
+    model: str = ""
+
+
+class ModelsResponse(BaseModel):
+    """What the client may choose when asking."""
+    models: List[str]
+    default_model: str
+    modes: List[str]
+    hybrid_search: bool
 
 
 # ============== Document Management Schemas ==============

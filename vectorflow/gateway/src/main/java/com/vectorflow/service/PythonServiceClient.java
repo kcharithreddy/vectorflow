@@ -154,7 +154,7 @@ public class PythonServiceClient implements VectorSearchService {
 
     @Override
     public Flux<ServerSentEvent<String>> askStream(String question, int maxSources, Map<String, Object> filters,
-                                                   List<Map<String, String>> history) {
+                                                   List<Map<String, String>> history, String mode, String model) {
         Map<String, Object> request = new HashMap<>();
         request.put("question", question);
         request.put("max_sources", maxSources);
@@ -163,6 +163,12 @@ public class PythonServiceClient implements VectorSearchService {
         }
         if (history != null && !history.isEmpty()) {
             request.put("history", history);
+        }
+        if (mode != null) {
+            request.put("mode", mode);
+        }
+        if (model != null) {
+            request.put("model", model);
         }
         return webClient.post()
                 .uri("/api/ask/stream")
@@ -173,6 +179,18 @@ public class PythonServiceClient implements VectorSearchService {
                 .filter(e -> e.event() != null && e.data() != null)
                 .map(e -> ServerSentEvent.<String>builder().event(e.event()).data(e.data()).build())
                 .onErrorResume(e -> Flux.just(errorEvent(streamErrorMessage(e))));
+    }
+
+    @Override
+    public Map<String, Object> chatOptions() {
+        try {
+            Map<String, Object> options = webClient.get().uri("/api/models").retrieve()
+                    .bodyToMono(new ParameterizedTypeReference<Map<String, Object>>() {})
+                    .block(Duration.ofSeconds(10));
+            return options == null ? Map.of() : options;
+        } catch (Exception e) {
+            throw GatewayException.upstream("AI service is unavailable - please try again shortly", e);
+        }
     }
 
     private static final ParameterizedTypeReference<ServerSentEvent<String>> SSE_TYPE = new ParameterizedTypeReference<>() {};

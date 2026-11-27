@@ -39,7 +39,7 @@ async def search_documents(
     qdrant_service: QdrantService = Depends(get_qdrant_service),
 ) -> SearchResponse:
     """
-    Semantic similarity search.
+    Hybrid search: semantic similarity fused with keyword (BM25) matching.
 
     Embeds the query, searches Qdrant (with optional category / tag / date
     filters and a minimum score) and returns ranked results with snippets.
@@ -51,6 +51,7 @@ async def search_documents(
             limit=request.limit,
             filters=filters_to_dict(request.filters),
             min_score=request.min_score,
+            query_text=request.query,
         )
     except Exception as exc:
         err = to_vectorflow_error(exc, SearchError())

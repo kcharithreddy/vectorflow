@@ -4,7 +4,7 @@ import { Fragment, useState, type ReactNode } from "react";
  * Small, safe Markdown renderer for assistant answers.
  *
  * Supports paragraphs, headings, bullet/numbered lists, fenced code blocks,
- * blockquotes, **bold**, *italic*, `inline code`, links and [n] citations.
+ * blockquotes, tables, **bold**, *italic*, `inline code`, links and [n] citations.
  * It builds React elements directly (never innerHTML), so model output or
  * text quoted from documents can't inject markup or scripts.
  */
@@ -20,7 +20,8 @@ type Block =
   | { kind: "h"; level: number; text: string }
   | { kind: "ul" | "ol"; items: string[]; start: number }
   | { kind: "code"; lang: string; code: string }
-  | { kind: "quote"; text: string };
+  | { kind: "quote"; text: string }
+  | { kind: "table"; head: string[]; align: ("left" | "center" | "right" | undefined)[]; rows: string[][] };
 
 export default function Markdown({ text, sourceCount, onCite }: Props) {
   const blocks = parseBlocks(text);
@@ -53,6 +54,33 @@ export default function Markdown({ text, sourceCount, onCite }: Props) {
             return <CodeBlock key={i} lang={b.lang} code={b.code} />;
           case "quote":
             return <blockquote key={i}>{inline(b.text)}</blockquote>;
+          case "table":
+            return (
+              <div key={i} className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      {b.head.map((h, j) => (
+                        <th key={j} style={{ textAlign: b.align[j] }}>
+                          {inline(h)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {b.rows.map((row, j) => (
+                      <tr key={j}>
+                        {b.head.map((_, k) => (
+                          <td key={k} style={{ textAlign: b.align[k] }}>
+                            {inline(row[k] ?? "")}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
           default:
             return <p key={i}>{inline(b.text)}</p>;
         }
@@ -87,6 +115,16 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
   );
 }
 
+const isTableRow = (line: string) => /^\s*\|.*\|\s*$/.test(line);
+const isTableDivider = (line: string) => /^\s*\|(\s*:?-{3,}:?\s*\|)+\s*$/.test(line);
+const tableCells = (line: string) =>
+  line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((c) => c.trim());
+
 export function parseBlocks(text: string): Block[] {
   const lines = text.replace(/\r\n/g, "\n").split("\n");
   const blocks: Block[] = [];
@@ -105,6 +143,19 @@ export function parseBlocks(text: string): Block[] {
       i++;
       while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) code.push(lines[i++]);
       blocks.push({ kind: "code", lang: fence[1], code: code.join("\n") });
+      continue;
+    }
+    if (isTableRow(line) && i + 1 < lines.length && isTableDivider(lines[i + 1])) {
+      flush();
+      const head = tableCells(line);
+      const align = tableCells(lines[i + 1]).map((c) =>
+        c.startsWith(":") && c.endsWith(":") ? "center" : c.endsWith(":") ? "right" : c.startsWith(":") ? "left" : undefined,
+      );
+      const rows: string[][] = [];
+      i += 2;
+      while (i < lines.length && isTableRow(lines[i])) rows.push(tableCells(lines[i++]));
+      i--;
+      blocks.push({ kind: "table", head, align, rows });
       continue;
     }
     const heading = /^(#{1,4})\s+(.*)$/.exec(line);

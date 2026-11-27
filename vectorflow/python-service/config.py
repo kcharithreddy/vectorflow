@@ -5,7 +5,7 @@ from typing import List
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 
 
 class Settings(BaseSettings):
@@ -50,6 +50,13 @@ class Settings(BaseSettings):
     # Ask: chunks scoring below this cosine similarity are treated as irrelevant
     # (text-embedding-3 scores for genuinely related text are typically 0.25-0.7).
     ask_min_relevance: float = 0.2
+    # Hybrid search: fuse vector similarity with keyword (BM25) matching
+    hybrid_search: bool = True
+
+    # Answering
+    # Models users may pick per question (comma-separated). LLM_MODEL is the default.
+    allowed_models: str = "gpt-4o-mini,gpt-4o"
+    general_max_tokens: int = 1500  # general-knowledge answers can be longer
 
     # Security: shared secret the gateway sends in X-Internal-API-Key.
     # Leave empty to disable (local development only).
@@ -71,6 +78,12 @@ class Settings(BaseSettings):
         if "*" in self.cors_origins:
             problems.append("CORS_ALLOWED_ORIGINS must not contain '*'")
         return problems
+
+    @property
+    def models(self) -> List[str]:
+        """Selectable chat models; the default model is always first."""
+        names = [m.strip() for m in self.allowed_models.split(",") if m.strip()]
+        return [self.llm_model] + [m for m in names if m != self.llm_model]
 
     @property
     def cors_origins(self) -> List[str]:

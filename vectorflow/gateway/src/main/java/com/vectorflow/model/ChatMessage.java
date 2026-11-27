@@ -49,6 +49,14 @@ public class ChatMessage implements Persistable<UUID> {
 
     private Double confidence;
 
+    /** documents | general - where an assistant answer came from */
+    @Column(name = "answer_type", length = 20)
+    private String answerType;
+
+    /** The model that produced an assistant answer */
+    @Column(length = 60)
+    private String model;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 

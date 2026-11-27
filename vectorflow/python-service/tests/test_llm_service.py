@@ -35,7 +35,8 @@ async def test_ask_without_results_returns_fallback(settings, embedding_service,
     chat = FakeChat()
     svc = make_service(settings, embedding_service, fake_qdrant, chat)
     result = await svc.ask_async("anything?")
-    assert result == {"answer": NO_CONTEXT_ANSWER, "sources": [], "confidence": 0.0}
+    assert result == {"answer": NO_CONTEXT_ANSWER, "sources": [], "confidence": 0.0,
+                      "answer_type": "documents", "model": "gpt-4o-mini"}
     assert chat.calls == []
 
 
@@ -144,7 +145,7 @@ async def test_stream_off_topic_skips_llm(settings, embedding_service, fake_qdra
     svc = make_service(settings, embedding_service, fake_qdrant, chat)
     events = await collect(svc.ask_stream_async("capital of France?"))
     assert [e["event"] for e in events] == ["delta", "done"]
-    assert events[-1]["data"] == {"confidence": 0.0, "sources": []}
+    assert events[-1]["data"] == {"confidence": 0.0, "sources": [], "answer_type": "documents", "model": "gpt-4o-mini"}
     assert chat.calls == []
 
 

@@ -37,10 +37,25 @@ export interface Source {
   relevance: number;
 }
 
+/** Where an answer came from: the user's documents or the model's general knowledge. */
+export type AnswerType = "documents" | "general";
+
+/** How to answer: documents when relevant (auto), strictly documents, or general knowledge. */
+export type AnswerMode = "auto" | "documents" | "general";
+
 export interface AskResult {
   answer: string;
   confidence: number;
   sources: Source[];
+  answerType?: AnswerType | null;
+  model?: string | null;
+}
+
+export interface ChatOptions {
+  models: string[];
+  default_model: string;
+  modes: AnswerMode[];
+  hybrid_search: boolean;
 }
 
 export interface SearchHit {
@@ -76,6 +91,8 @@ export interface ChatMessageItem {
   content: string;
   sources: Source[];
   confidence: number | null;
+  answerType: AnswerType | null;
+  model: string | null;
   createdAt: string;
 }
 
@@ -258,6 +275,8 @@ export const api = {
       signal?: AbortSignal;
       conversationId?: string | null;
       regenerate?: boolean;
+      mode?: AnswerMode;
+      model?: string | null;
       onConversation?: (c: ConversationEvent) => void;
     } = {},
   ): Promise<AskResult> {
@@ -279,6 +298,8 @@ export const api = {
           tags: f?.tags,
           conversationId: opts.conversationId ?? null,
           regenerate: opts.regenerate ?? false,
+          mode: opts.mode ?? "auto",
+          model: opts.model || null,
         }),
         signal: opts.signal,
       });
@@ -317,7 +338,13 @@ export const api = {
         answer += payload.text;
         onDelta(payload.text);
       } else if (event === "done") {
-        result = { answer: answer.trim(), confidence: payload.confidence, sources: payload.sources };
+        result = {
+          answer: answer.trim(),
+          confidence: payload.confidence,
+          sources: payload.sources ?? [],
+          answerType: payload.answer_type ?? null,
+          model: payload.model ?? null,
+        };
       } else if (event === "error") {
         throw new ApiError(payload.message);
       }
@@ -338,6 +365,21 @@ export const api = {
     return result;
   },
 
+  /** Models and answer modes the server allows. */
+  async chatOptions(): Promise<ChatOptions> {
+    const token = getToken();
+    let res: Response;
+    try {
+      res = await fetch("/api/chat/options", {
+        headers: { Accept: "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      });
+    } catch {
+      throw new ApiError("Cannot reach the VectorFlow gateway. Is it running?");
+    }
+    if (!res.ok) throw new ApiError(`Could not load chat options (HTTP ${res.status})`, res.status === 401 ? "UNAUTHORIZED" : undefined);
+    return res.json();
+  },
+
   async conversations(limit = 50) {
     const d = await gql<{ conversations: Conversation[] }>(
       `query($l:Int){ conversations(limit:$l){ id title createdAt updatedAt } }`,
@@ -349,7 +391,7 @@ export const api = {
   async conversationMessages(id: string) {
     const d = await gql<{ conversation: (Conversation & { messages: ChatMessageItem[] }) | null }>(
       `query($id:ID!){ conversation(id:$id){ id title createdAt updatedAt
-         messages{ id role content confidence createdAt sources{ documentId title snippet relevance } } } }`,
+         messages{ id role content confidence answerType model createdAt sources{ documentId title snippet relevance } } } }`,
       { id },
     );
     return d.conversation;

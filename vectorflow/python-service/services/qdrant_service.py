@@ -22,11 +22,15 @@ from qdrant_client.http.models import (
     MatchAny,
     MatchValue,
     PayloadSchemaType,
+    MatchText,
     PointStruct,
+    TextIndexParams,
+    TokenizerType,
     VectorParams,
 )
 
 from config import Settings, get_settings
+from services import hybrid
 from services.embedding_service import Chunk
 
 logger = logging.getLogger(__name__)
@@ -38,6 +42,9 @@ PAYLOAD_INDEXES = {
     "created_at": PayloadSchemaType.DATETIME,
     "metadata.category": PayloadSchemaType.KEYWORD,
     "metadata.tags": PayloadSchemaType.KEYWORD,
+    # full-text index for the keyword half of hybrid search
+    "text": TextIndexParams(type="text", tokenizer=TokenizerType.WORD, lowercase=True,
+                            min_token_len=2, max_token_len=40),
 }
 
 SCROLL_BATCH = 256
@@ -74,6 +81,7 @@ class QdrantService:
         )
         self.collection_name = settings.qdrant_collection
         self.vector_size = settings.embedding_dimensions
+        self.hybrid_enabled = settings.hybrid_search
         self._ready = False
         self._ready_lock = asyncio.Lock()
 
@@ -180,18 +188,72 @@ class QdrantService:
         limit: int = 5,
         filters: Optional[Dict[str, Any]] = None,
         min_score: Optional[float] = None,
+        query_text: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Return the chunks most similar to ``query_embedding``."""
+        """Return the chunks most relevant to the query.
+
+        With ``query_text`` (and HYBRID_SEARCH on) this is hybrid search:
+        vector candidates + keyword candidates, re-ranked by fusing the vector
+        ranking with a BM25 ranking.  Each result's ``score`` stays the cosine
+        similarity, so relevance thresholds keep their meaning.
+        """
         await self.ensure_collection()
-        response = await self.client.query_points(
-            collection_name=self.collection_name,
-            query=query_embedding,
-            limit=limit,
-            query_filter=self.build_search_filter(filters),
-            score_threshold=min_score,
-            with_payload=True,
+        query_filter = self.build_search_filter(filters)
+        terms = hybrid.keywords(query_text) if (query_text and self.hybrid_enabled) else []
+        if not terms:
+            response = await self.client.query_points(
+                collection_name=self.collection_name,
+                query=query_embedding,
+                limit=limit,
+                query_filter=query_filter,
+                score_threshold=min_score,
+                with_payload=True,
+            )
+            return self.format_search_results(response.points)
+
+        pool = max(limit * 4, 20)
+        vector_resp, keyword_resp = await asyncio.gather(
+            self.client.query_points(
+                collection_name=self.collection_name,
+                query=query_embedding,
+                limit=pool,
+                query_filter=query_filter,
+                score_threshold=min_score,
+                with_payload=True,
+            ),
+            self.client.query_points(
+                collection_name=self.collection_name,
+                query=query_embedding,
+                limit=pool,
+                query_filter=self.keyword_filter(terms, query_filter),
+                # An exact keyword match counts as evidence, so it may score a bit
+                # lower on meaning than a pure vector hit.
+                score_threshold=(min_score / 2) if min_score else None,
+                with_payload=True,
+            ),
         )
-        return self.format_search_results(response.points)
+        vector_hits = self.format_search_results(vector_resp.points)
+        keyword_hits = self.format_search_results(keyword_resp.points)
+        return self.fuse(terms, vector_hits, keyword_hits, limit)
+
+    @staticmethod
+    def keyword_filter(terms: Sequence[str], base: Optional[Filter]) -> Filter:
+        """Chunks matching the user's filters AND containing at least one keyword."""
+        should = [FieldCondition(key="text", match=MatchText(text=t)) for t in terms]
+        return Filter(must=list(base.must or []) if base else [], should=should)
+
+    @staticmethod
+    def fuse(terms: Sequence[str], vector_hits: List[Dict[str, Any]],
+             keyword_hits: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+        by_id: Dict[str, Dict[str, Any]] = {}
+        for hit in vector_hits + keyword_hits:
+            by_id.setdefault(hit["id"], hit)
+        candidates = list(by_id.values())
+        bm25 = hybrid.bm25_scores(terms, [c["title"] + " " + c["text"] for c in candidates])
+        keyword_rank = [c["id"] for c, s in sorted(zip(candidates, bm25), key=lambda x: -x[1]) if s > 0]
+        fused = hybrid.rrf_fuse([[h["id"] for h in vector_hits], keyword_rank])
+        ranked = sorted(candidates, key=lambda c: (-fused.get(c["id"], 0.0), -c["score"]))
+        return ranked[:limit]
 
     async def get_collection_info_async(self) -> Dict[str, Any]:
         await self.ensure_collection()

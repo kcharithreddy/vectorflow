@@ -131,6 +131,24 @@ class PythonServiceClientTest {
     }
 
     @Test
+    void askStreamForwardsModeAndModel() {
+        body = "event: done\ndata: {\"confidence\": 0.9, \"sources\": []}\n\n";
+        contentType = "text/event-stream";
+        client("k").askStream("q", 3, null, null, "general", "gpt-4o").collectList().block();
+        assertThat(seenBody.get()).contains("\"mode\":\"general\"").contains("\"model\":\"gpt-4o\"");
+        client("k").askStream("q", 3, null, null).collectList().block();
+        assertThat(seenBody.get()).doesNotContain("mode").doesNotContain("model");
+    }
+
+    @Test
+    void chatOptionsComeFromTheModelsEndpoint() {
+        body = "{\"models\":[\"gpt-4o-mini\",\"gpt-4o\"],\"default_model\":\"gpt-4o-mini\"}";
+        assertThat(client("k").chatOptions()).containsEntry("default_model", "gpt-4o-mini");
+        status = 500;
+        assertThatThrownBy(() -> client("k").chatOptions()).hasMessageContaining("unavailable");
+    }
+
+    @Test
     void askStreamTurnsHttpErrorsIntoErrorEvent() {
         status = 422;
         body = "{\"detail\":[{\"loc\":[\"body\",\"question\"],\"msg\":\"too long\"}]}";

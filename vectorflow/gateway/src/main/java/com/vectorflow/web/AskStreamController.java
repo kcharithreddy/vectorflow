@@ -14,6 +14,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -24,8 +25,10 @@ import reactor.core.scheduler.Schedulers;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Pattern;
 
 /**
  * Streaming chat: answer tokens are relayed to the browser as Server-Sent Events
@@ -50,11 +53,28 @@ public class AskStreamController {
     private final RateLimiter rateLimiter;
     private final ConversationService conversationService;
 
+    /** Answer modes: grounded in documents, general knowledge, or auto (documents when they answer it). */
+    static final Set<String> MODES = Set.of("auto", "documents", "general");
+    static final String DEFAULT_MODE = "auto";
+    private static final Pattern MODEL_NAME = Pattern.compile("[A-Za-z0-9._:\\-]{1,60}");
+
     public record AskStreamRequest(String question, Integer maxSources, String category, List<String> tags,
-                                   String conversationId, Boolean regenerate) {
+                                   String conversationId, Boolean regenerate, String mode, String model) {
         public AskStreamRequest(String question, Integer maxSources, String category, List<String> tags) {
-            this(question, maxSources, category, tags, null, false);
+            this(question, maxSources, category, tags, null, false, null, null);
         }
+
+        public AskStreamRequest(String question, Integer maxSources, String category, List<String> tags,
+                                String conversationId, Boolean regenerate) {
+            this(question, maxSources, category, tags, conversationId, regenerate, null, null);
+        }
+    }
+
+    /** Models and answer modes the chat UI may offer. */
+    @GetMapping("/chat/options")
+    public Map<String, Object> chatOptions() {
+        authGuard.requireAuth();
+        return vectorSearchService.chatOptions();
     }
 
     @PostMapping(value = "/ask/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -66,11 +86,14 @@ public class AskStreamController {
         boolean regenerate = Boolean.TRUE.equals(body.regenerate());
         String question = regenerate ? null : InputValidator.requireText(body.question(), "question", 4000);
         int maxSources = InputValidator.range(body.maxSources(), 5, 1, InputValidator.MAX_SOURCES, "maxSources");
+        String mode = mode(body.mode());
+        String model = model(body.model());
         rateLimiter.checkAsk(user.getId().toString());
 
         var turn = conversationService.prepareTurn(user, body.conversationId(), question, regenerate);
         UUID conversationId = turn.conversation().getId();
-        log.info("Chat turn in {} (history={}, regenerate={})", conversationId, turn.history().size(), regenerate);
+        log.info("Chat turn in {} (history={}, regenerate={}, mode={}, model={})",
+                conversationId, turn.history().size(), regenerate, mode, model == null ? "default" : model);
 
         StringBuilder answer = new StringBuilder();
         AtomicReference<JsonNode> done = new AtomicReference<>();
@@ -81,7 +104,7 @@ public class AskStreamController {
                 "created", turn.created())));
 
         Flux<ServerSentEvent<String>> answerStream = vectorSearchService
-                .askStream(turn.question(), maxSources, filters(body), turn.history())
+                .askStream(turn.question(), maxSources, filters(body), turn.history(), mode, model)
                 .doOnNext(e -> {
                     try {
                         if ("delta".equals(e.event())) {
@@ -103,14 +126,45 @@ public class AskStreamController {
         try {
             List<Map<String, Object>> sources = null;
             Double confidence = null;
+            String answerType = null;
+            String model = null;
             if (done != null) {
                 sources = JSON.convertValue(done.path("sources"), new TypeReference<>() {});
                 confidence = done.path("confidence").isNumber() ? done.path("confidence").asDouble() : null;
+                answerType = text(done, "answer_type");
+                model = text(done, "model");
             }
-            conversationService.saveAnswer(conversationId, answer.toString(), sources, confidence);
+            conversationService.saveAnswer(conversationId, answer.toString(), sources, confidence, answerType, model);
         } catch (Exception e) {
             log.error("Failed to save answer for conversation {}", conversationId, e);
         }
+    }
+
+    private static String text(JsonNode node, String field) {
+        JsonNode v = node.path(field);
+        return v.isTextual() && !v.asText().isBlank() ? v.asText() : null;
+    }
+
+    static String mode(String mode) {
+        if (mode == null || mode.isBlank()) {
+            return DEFAULT_MODE;
+        }
+        String m = mode.trim().toLowerCase();
+        if (!MODES.contains(m)) {
+            throw GatewayException.badRequest("mode must be one of: auto, documents, general");
+        }
+        return m;
+    }
+
+    static String model(String model) {
+        if (model == null || model.isBlank()) {
+            return null;
+        }
+        String m = model.trim();
+        if (!MODEL_NAME.matcher(m).matches()) {
+            throw GatewayException.badRequest("Invalid model name");
+        }
+        return m;  // the AI service checks it against its allowlist
     }
 
     static ServerSentEvent<String> event(String name, Map<String, Object> data) {

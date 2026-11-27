@@ -52,44 +52,45 @@ class AskStreamControllerTest {
         List<Map<String, String>> history = List.of();
         when(conversations.prepareTurn(user, null, "What is a pod?", false))
                 .thenReturn(new ConversationService.Turn(conv, "What is a pod?", history, true));
-        when(vectors.askStream(eq("What is a pod?"), eq(5), any(), eq(history))).thenReturn(Flux.just(
+        when(vectors.askStream(eq("What is a pod?"), eq(5), any(), eq(history), eq("auto"), isNull())).thenReturn(Flux.just(
                 sse("sources", "{\"sources\": []}"),
                 sse("delta", "{\"text\": \"A pod \"}"),
                 sse("delta", "{\"text\": \"runs containers [1].\"}"),
-                sse("done", "{\"confidence\": 0.9, \"sources\": [{\"title\": \"K8s\", \"relevance\": 0.5}]}")));
+                sse("done", "{\"confidence\": 0.9, \"sources\": [{\"title\": \"K8s\", \"relevance\": 0.5}], \"answer_type\": \"documents\", \"model\": \"gpt-4o-mini\"}")));
 
         var events = controller.askStream(new AskStreamController.AskStreamRequest("  What is a pod?  ", null, " devops ", List.of("k8s")))
                 .collectList().block();
 
         assertThat(events).extracting(ServerSentEvent::event).containsExactly("conversation", "sources", "delta", "delta", "done");
         assertThat(events.get(0).data()).contains(conv.getId().toString()).contains("\"created\":true");
-        verify(vectors).askStream(eq("What is a pod?"), eq(5), eq(Map.of("category", "devops", "tags", List.of("k8s"))), eq(history));
+        verify(vectors).askStream(eq("What is a pod?"), eq(5), eq(Map.of("category", "devops", "tags", List.of("k8s"))), eq(history), eq("auto"), isNull());
         verify(conversations, timeout(2000)).saveAnswer(eq(conv.getId()), eq("A pod runs containers [1]."),
-                argThat(s -> s != null && s.size() == 1 && "K8s".equals(s.get(0).get("title"))), eq(0.9));
+                argThat(s -> s != null && s.size() == 1 && "K8s".equals(s.get(0).get("title"))), eq(0.9),
+                eq("documents"), eq("gpt-4o-mini"));
     }
 
     @Test
     void stoppedStreamSavesThePartialAnswer() {
         when(conversations.prepareTurn(any(), any(), any(), anyBoolean()))
                 .thenReturn(new ConversationService.Turn(conv, "q", List.of(), false));
-        when(vectors.askStream(any(), anyInt(), any(), any())).thenReturn(Flux.concat(
+        when(vectors.askStream(any(), anyInt(), any(), any(), any(), any())).thenReturn(Flux.concat(
                 Flux.just(sse("delta", "{\"text\": \"Partial answer\"}")), Flux.never()));
 
         // Client reads the conversation event + one delta, then disconnects (Stop button).
         controller.askStream(new AskStreamController.AskStreamRequest("q", 3, null, null, conv.getId().toString(), false))
                 .take(2).blockLast();
 
-        verify(conversations, timeout(2000)).saveAnswer(conv.getId(), "Partial answer", null, null);
+        verify(conversations, timeout(2000)).saveAnswer(conv.getId(), "Partial answer", null, null, null, null);
     }
 
     @Test
     void regenerateDoesNotRequireAQuestion() {
         when(conversations.prepareTurn(user, conv.getId().toString(), null, true))
                 .thenReturn(new ConversationService.Turn(conv, "Original question", List.of(), false));
-        when(vectors.askStream(any(), anyInt(), any(), any())).thenReturn(Flux.empty());
+        when(vectors.askStream(any(), anyInt(), any(), any(), any(), any())).thenReturn(Flux.empty());
         controller.askStream(new AskStreamController.AskStreamRequest(null, 3, null, null, conv.getId().toString(), true))
                 .collectList().block();
-        verify(vectors).askStream(eq("Original question"), eq(3), isNull(), eq(List.of()));
+        verify(vectors).askStream(eq("Original question"), eq(3), isNull(), eq(List.of()), eq("auto"), isNull());
     }
 
     @Test
@@ -115,6 +116,29 @@ class AskStreamControllerTest {
         assertThatThrownBy(() -> controller.askStream(new AskStreamController.AskStreamRequest("q", 3, null, null)))
                 .isInstanceOf(AccessDeniedException.class);
         verifyNoInteractions(vectors);
+    }
+
+    @Test
+    void modeAndModelArePassedThroughAndValidated() {
+        when(conversations.prepareTurn(any(), any(), any(), anyBoolean()))
+                .thenReturn(new ConversationService.Turn(conv, "q", List.of(), true));
+        when(vectors.askStream(any(), anyInt(), any(), any(), any(), any())).thenReturn(Flux.empty());
+        controller.askStream(new AskStreamController.AskStreamRequest("q", 3, null, null, null, false, " General ", "gpt-4o"))
+                .collectList().block();
+        verify(vectors).askStream(eq("q"), eq(3), isNull(), eq(List.of()), eq("general"), eq("gpt-4o"));
+
+        assertThatThrownBy(() -> controller.askStream(new AskStreamController.AskStreamRequest("q", 3, null, null, null, false, "creative", null)))
+                .hasMessageContaining("mode must be one of");
+        assertThatThrownBy(() -> controller.askStream(new AskStreamController.AskStreamRequest("q", 3, null, null, null, false, null, "gpt 4o; drop")))
+                .hasMessageContaining("Invalid model");
+    }
+
+    @Test
+    void chatOptionsRequireLoginAndComeFromTheAiService() {
+        when(vectors.chatOptions()).thenReturn(Map.of("models", List.of("gpt-4o-mini", "gpt-4o"), "default_model", "gpt-4o-mini"));
+        assertThat(controller.chatOptions()).containsEntry("default_model", "gpt-4o-mini");
+        when(guard.requireAuth()).thenThrow(new AccessDeniedException("Authentication required"));
+        assertThatThrownBy(() -> controller.chatOptions()).isInstanceOf(AccessDeniedException.class);
     }
 
     @Test

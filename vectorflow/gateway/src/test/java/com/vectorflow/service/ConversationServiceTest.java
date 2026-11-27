@@ -92,6 +92,17 @@ class ConversationServiceTest {
     }
 
     @Test
+    void answersRememberTheirTypeAndModel() {
+        when(conversations.findById(conv.getId())).thenReturn(java.util.Optional.of(conv));
+        service.saveAnswer(conv.getId(), " Paris. ", null, 0.8, "general", "gpt-4o");
+        ArgumentCaptor<ChatMessage> saved = ArgumentCaptor.forClass(ChatMessage.class);
+        verify(messages).save(saved.capture());
+        assertThat(saved.getValue().getContent()).isEqualTo("Paris.");
+        assertThat(saved.getValue().getAnswerType()).isEqualTo("general");
+        assertThat(saved.getValue().getModel()).isEqualTo("gpt-4o");
+    }
+
+    @Test
     void blankAnswersAreNotSaved() {
         service.saveAnswer(conv.getId(), "   ", null, null);
         verifyNoInteractions(messages);

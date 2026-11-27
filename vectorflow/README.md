@@ -23,9 +23,12 @@ render as rich Markdown, and cite the exact source passages they came from.
 
 ## ✨ Highlights
 
+- **Three answer modes**: *Auto* answers from your documents when they cover the question and from general knowledge otherwise, *My documents* is strictly grounded, and *General knowledge* is a normal AI assistant. Every answer is labelled 📄 *From your documents* or 🌐 *General knowledge*
+- **Hybrid search**: vector similarity fused with keyword (BM25) matching via Reciprocal Rank Fusion, so exact terms like `PgBouncer` or `X-RateLimit-Remaining` are found even when embeddings miss them
+- **Model picker**: users choose per question from an admin allowlist (e.g. `gpt-4o-mini` for speed, `gpt-4o` for quality); the model is stored with each answer
 - **ChatGPT-style conversations**: saved chat history (grouped by date), rename/delete, new chat, Stop / Copy / Regenerate
 - **Memory for follow-ups**: "can I carry *them* over?" is rewritten into a standalone query before retrieval, and recent turns are sent to the model
-- **Rich answers**: safe Markdown rendering (lists, bold, code blocks with copy) with clickable [1] citations inside
+- **Rich answers**: safe Markdown rendering (lists, tables, bold, code blocks with copy) with clickable [1] citations inside
 - **Grounded answers with citations**: every answer cites numbered sources; click [1] to jump to the passage
 - **Streaming responses**: tokens flow from OpenAI → Python → Spring gateway → browser via Server-Sent Events
 - **Honest when it doesn't know**: a relevance threshold skips the LLM for off-topic questions (no hallucination, no cost)
@@ -33,13 +36,16 @@ render as rich Markdown, and cite the exact source passages they came from.
 - **Microservices**: Spring Boot GraphQL gateway + FastAPI AI service + React app, 6 containers with Docker Compose
 - **Security in depth**: JWT + roles, login lockout, per-user rate limits, GraphQL depth limits, CSP and security headers, audit log ([SECURITY.md](SECURITY.md))
 - **Measured quality**: an evaluation suite scores 100% retrieval hit@1 and 100% off-topic honesty on its benchmark ([results](#-evaluation))
-- **133 automated tests** (69 Python, 64 Java) + browser end-to-end tests, CI on every push, Dependabot
+- **154 automated tests** (85 Python, 69 Java) + browser end-to-end tests, CI on every push, Dependabot
 - **Versioned database migrations** with Flyway (existing databases upgrade in place)
 
 <table>
 <tr>
 <td width="50%"><img src="docs/images/real-openai-answer.png" alt="Real OpenAI answer with a citation"><br><sub><b>Real gpt-4o-mini answer</b> from an uploaded story, citing its source with 84% confidence.</sub></td>
 <td width="50%"><img src="docs/images/formatted-answer.png" alt="Formatted answer with chat history"><br><sub><b>Chat history + rich answers</b>: Markdown lists, bold and code blocks, each fact cited.</sub></td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/images/answer-modes.png" alt="Answer modes, badges and model picker"><br><sub><b>Auto mode</b>: a general question gets a 🌐 general-knowledge answer (with a table), while a question about the user's infrastructure is answered 📄 from their documents by the selected model, with a citation.</sub></td>
 </tr>
 </table>
 
@@ -358,6 +364,31 @@ Chunk 2: "Start of new topic. First sentences. More content..."
 
 ---
 
+### Hybrid Search and Answer Modes
+
+Embeddings capture *meaning*, but they can blur rare exact terms such as product names, error codes or
+header names. VectorFlow therefore runs two retrievals in parallel:
+
+1. **Vector search**: the top candidates by cosine similarity (with the relevance threshold).
+2. **Keyword search**: chunks that contain the query's significant terms (a Qdrant full-text index).
+
+The candidates are scored with **BM25** and the two rankings are merged with **Reciprocal Rank Fusion**
+(`score = Σ 1 / (60 + rank)`), so a chunk that is strong on either signal rises to the top. The
+displayed relevance stays the cosine similarity, so thresholds keep their meaning.
+
+The retrieved passages then feed one of three **answer modes**:
+
+| Mode | Retrieval | Prompt | Badge |
+|------|-----------|--------|-------|
+| **Auto** (chat default) | yes | Answer from the sources and cite them; if they don't cover the question, answer from general knowledge *without* citations | 📄 if the answer cites sources, else 🌐 |
+| **My documents** | yes | Only the sources; say "not enough information" otherwise | 📄 |
+| **General knowledge** | no | A general AI assistant (with the conversation history) | 🌐 |
+
+If no passage passes the relevance threshold, Auto skips straight to a general answer and *My documents*
+replies honestly without calling the model.
+
+---
+
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -537,12 +568,16 @@ query {
 **Streaming chat** (what the web app uses): `POST /api/ask/stream` returns Server-Sent Events:
 `conversation` (id + title), `sources` (retrieved passages), many `delta` events (answer text as it is
 generated), then `done` (confidence and the sources to display). Errors arrive as an `error` event.
+Choose how to answer with `"mode"`: `auto` (default; documents when they answer the question,
+otherwise general knowledge), `documents` (strictly grounded), or `general` (no retrieval). Pick a
+model with `"model"` (one of `GET /api/chat/options`). `done` also carries `answer_type`
+(`documents` | `general`) and the `model` that answered.
 Pass `conversationId` to continue a chat (the recent history is used to understand follow-ups), or
 `"regenerate": true` to replace the last answer. Every turn is saved to the user's chat history; if the
 client stops early, the partial answer is saved.
 ```bash
 curl -N -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-     -d '{"question":"How many vacation days do we get?","maxSources":5}' \
+     -d '{"question":"How many vacation days do we get?","maxSources":5,"mode":"auto","model":"gpt-4o-mini"}' \
      http://localhost:8080/api/ask/stream
 ```
 
@@ -584,8 +619,9 @@ All `/api/*` endpoints require the `X-Internal-API-Key` header when `INTERNAL_AP
 | POST | `/api/ingest` | Chunk + embed + store one document (optional caller-supplied `document_id`) |
 | POST | `/api/bulk-ingest` | Ingest up to 100 documents concurrently |
 | POST | `/api/extract` | Extract text from an uploaded PDF / DOCX / text file (multipart `file`) |
-| POST | `/api/search` | Similarity search with `filters` (`category`, `tags`, `date_from`, `date_to`) and `min_score` |
-| POST | `/api/ask` | RAG answer with sources |
+| POST | `/api/search` | Hybrid (vector + keyword) search with `filters` (`category`, `tags`, `date_from`, `date_to`) and `min_score` |
+| POST | `/api/ask` | Answer with sources; `mode` = `documents` (default) / `auto` / `general`, optional `model` |
+| GET | `/api/models` | Selectable models and answer modes |
 | POST | `/api/ask/stream` | Same, streamed as Server-Sent Events (`sources`, `delta`…, `done`) |
 | GET | `/api/documents` | Paginated document list |
 | GET | `/api/documents/{id}` | All chunks of a document |
@@ -655,7 +691,9 @@ vectorflow/
 | `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` | Database settings | `vectorflow_sql_db` / `vectorflow` / `vectorflow123` |
 | `EMBEDDING_MODEL` | OpenAI embedding model | `text-embedding-3-small` |
 | `EMBEDDING_DIMENSIONS` | Vector size (must match the Qdrant collection) | `1536` |
-| `LLM_MODEL` | Chat model used by `ask` | `gpt-4o-mini` |
+| `LLM_MODEL` | Default chat model | `gpt-4o-mini` |
+| `ALLOWED_MODELS` | Models users may pick (comma-separated) | `gpt-4o-mini,gpt-4o` |
+| `HYBRID_SEARCH` | Fuse keyword (BM25) matching with vector search | `true` |
 | `QDRANT_COLLECTION` | Qdrant collection name | `documents` |
 | `CORS_ALLOWED_ORIGINS` | Comma-separated allowed origins | `http://localhost:3000,http://localhost:8080` |
 | `GRAPHIQL_ENABLED` | Serve the GraphiQL IDE | `true` |

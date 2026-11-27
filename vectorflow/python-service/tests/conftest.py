@@ -79,8 +79,9 @@ class FakeQdrantService:
         doc = self.docs.pop(document_id, None)
         return len(doc["chunks"]) if doc else 0
 
-    async def search_async(self, query_embedding, limit=5, filters=None, min_score=None):
+    async def search_async(self, query_embedding, limit=5, filters=None, min_score=None, query_text=None):
         self.last_search = {"limit": limit, "filters": filters, "min_score": min_score}
+        self.last_query_text = query_text
         return self.search_results[:limit]
 
     async def get_document_chunks_async(self, document_id):
