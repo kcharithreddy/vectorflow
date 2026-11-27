@@ -246,3 +246,46 @@ button.cite:hover { background: var(--primary); color: #fff; }
   .row { grid-template-columns: 1fr; }
   .filter { max-width: none; flex: 1; }
 }
+
+/* ---------- chat history sidebar ---------- */
+.side-tabs { margin: 12px 12px 0; }
+.chats { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.new-chat { width: 100%; background: var(--surface); border: 1px solid var(--border); text-align: left; display: flex; gap: 8px; align-items: center; }
+.new-chat:hover { border-color: var(--primary); color: var(--primary); }
+.chat-group-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); padding: 6px 8px 4px; }
+.chat-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.chat-item { display: flex; align-items: center; border-radius: 8px; }
+.chat-item:hover, .chat-item.active { background: var(--surface-2); }
+.chat-item.active .chat-title { font-weight: 600; }
+.chat-title { flex: 1; min-width: 0; text-align: left; background: none; border: none; cursor: pointer; padding: 7px 8px; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-actions { display: none; padding-right: 4px; }
+.chat-item:hover .chat-actions, .chat-item.active .chat-actions, .chat-item:focus-within .chat-actions { display: flex; }
+.icon-btn.small { width: 26px; height: 26px; font-size: 0.8rem; }
+.docs { padding-top: 12px; }
+
+/* ---------- markdown answers ---------- */
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p { margin: 0 0 10px; }
+.md ul, .md ol { margin: 0 0 10px; padding-left: 22px; }
+.md li { margin: 3px 0; }
+.md h3, .md h4, .md h5, .md h6 { margin: 14px 0 6px; font-size: 1rem; }
+.md h3 { font-size: 1.08rem; }
+.md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.86em; background: var(--surface-2); padding: 1px 5px; border-radius: 5px; }
+.md blockquote { margin: 0 0 10px; padding: 4px 12px; border-left: 3px solid var(--border); color: var(--muted); }
+.md a { color: var(--primary); }
+.code-block { margin: 0 0 10px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.code-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 10px; font-size: 0.75rem; color: var(--muted); background: var(--surface-2); }
+.code-block pre { margin: 0; padding: 10px 12px; overflow-x: auto; background: var(--bg); }
+.code-block code { background: none; padding: 0; font-size: 0.84rem; white-space: pre; }
+.answer { white-space: normal; }
+
+/* ---------- answer actions, stop ---------- */
+.answer-actions { display: flex; gap: 6px; margin-top: 10px; }
+.action { border: 1px solid var(--border); background: transparent; border-radius: 8px; padding: 3px 10px; font-size: 0.8rem; color: var(--muted); cursor: pointer; }
+.action:hover { color: var(--text); border-color: var(--text); }
+.btn.stop { background: var(--surface-2); border-color: var(--border); }
+.btn.stop:hover { border-color: var(--danger); color: var(--danger); }
+.stopped { margin: 6px 0 0; font-style: italic; }
+.center { text-align: center; }
+.composer .hint { margin-top: 6px; font-size: 0.75rem; }

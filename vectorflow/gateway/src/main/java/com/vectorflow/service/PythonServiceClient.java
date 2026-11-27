@@ -153,12 +153,16 @@ public class PythonServiceClient implements VectorSearchService {
     }
 
     @Override
-    public Flux<ServerSentEvent<String>> askStream(String question, int maxSources, Map<String, Object> filters) {
+    public Flux<ServerSentEvent<String>> askStream(String question, int maxSources, Map<String, Object> filters,
+                                                   List<Map<String, String>> history) {
         Map<String, Object> request = new HashMap<>();
         request.put("question", question);
         request.put("max_sources", maxSources);
         if (filters != null && !filters.isEmpty()) {
             request.put("filters", filters);
+        }
+        if (history != null && !history.isEmpty()) {
+            request.put("history", history);
         }
         return webClient.post()
                 .uri("/api/ask/stream")

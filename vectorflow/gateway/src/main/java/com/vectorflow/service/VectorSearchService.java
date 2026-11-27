@@ -31,7 +31,8 @@ public interface VectorSearchService {
      * Streams an answer as Server-Sent Events: {@code sources}, then {@code delta}s, then {@code done}.
      * Failures are delivered as an {@code error} event rather than breaking the stream.
      */
-    Flux<ServerSentEvent<String>> askStream(String question, int maxSources, Map<String, Object> filters);
+    Flux<ServerSentEvent<String>> askStream(String question, int maxSources, Map<String, Object> filters,
+                                            List<Map<String, String>> history);
 
     /** @return true if the document existed in the vector store and was deleted, false if it was not found */
     boolean deleteDocument(String documentId);

@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -117,11 +117,18 @@ class SearchResponse(BaseModel):
 
 # ============== Ask (RAG) Schemas ==============
 
+class HistoryMessage(BaseModel):
+    """A previous turn of the conversation."""
+    role: Literal["user", "assistant"]
+    content: str = Field(..., max_length=8000)
+
+
 class AskRequest(BaseModel):
     """Request schema for RAG-based question answering."""
     question: str = Field(..., min_length=1, max_length=4000)
     max_sources: int = Field(default=5, ge=1, le=10)
     filters: Optional[SearchFilter] = None
+    history: List[HistoryMessage] = Field(default_factory=list, max_length=20)
 
     @field_validator("question")
     @classmethod

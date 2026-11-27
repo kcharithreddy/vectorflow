@@ -63,6 +63,28 @@ export interface UploadResult {
   characters: number;
 }
 
+export interface Conversation {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChatMessageItem {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  sources: Source[];
+  confidence: number | null;
+  createdAt: string;
+}
+
+export interface ConversationEvent {
+  id: string;
+  title: string;
+  created: boolean;
+}
+
 export interface Filters {
   category?: string;
   tags?: string[];
@@ -230,7 +252,14 @@ export const api = {
   async askStream(
     question: string,
     onDelta: (text: string) => void,
-    opts: { maxSources?: number; filters?: Filters; signal?: AbortSignal } = {},
+    opts: {
+      maxSources?: number;
+      filters?: Filters;
+      signal?: AbortSignal;
+      conversationId?: string | null;
+      regenerate?: boolean;
+      onConversation?: (c: ConversationEvent) => void;
+    } = {},
   ): Promise<AskResult> {
     const token = getToken();
     const f = cleanFilters(opts.filters);
@@ -243,10 +272,18 @@ export const api = {
           Accept: "text/event-stream, application/json", // JSON for errors (401/400)
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ question, maxSources: opts.maxSources ?? 5, category: f?.category, tags: f?.tags }),
+        body: JSON.stringify({
+          question,
+          maxSources: opts.maxSources ?? 5,
+          category: f?.category,
+          tags: f?.tags,
+          conversationId: opts.conversationId ?? null,
+          regenerate: opts.regenerate ?? false,
+        }),
         signal: opts.signal,
       });
-    } catch {
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") throw err;
       throw new ApiError("Cannot reach the VectorFlow gateway. Is it running?");
     }
     if (!res.ok || !res.body) {
@@ -274,7 +311,9 @@ export const api = {
       }
       if (!data.length) return;
       const payload = JSON.parse(data.join("\n"));
-      if (event === "delta") {
+      if (event === "conversation") {
+        opts.onConversation?.(payload as ConversationEvent);
+      } else if (event === "delta") {
         answer += payload.text;
         onDelta(payload.text);
       } else if (event === "done") {
@@ -297,6 +336,31 @@ export const api = {
     if (buffer.trim()) handle(buffer);
     if (!result) throw new ApiError("The answer stream ended unexpectedly.");
     return result;
+  },
+
+  async conversations(limit = 50) {
+    const d = await gql<{ conversations: Conversation[] }>(
+      `query($l:Int){ conversations(limit:$l){ id title createdAt updatedAt } }`,
+      { l: limit },
+    );
+    return d.conversations;
+  },
+
+  async conversationMessages(id: string) {
+    const d = await gql<{ conversation: (Conversation & { messages: ChatMessageItem[] }) | null }>(
+      `query($id:ID!){ conversation(id:$id){ id title createdAt updatedAt
+         messages{ id role content confidence createdAt sources{ documentId title snippet relevance } } } }`,
+      { id },
+    );
+    return d.conversation;
+  },
+
+  async renameConversation(id: string, title: string) {
+    await gql(`mutation($id:ID!,$t:String!){ renameConversation(id:$id,title:$t){ id } }`, { id, t: title });
+  },
+
+  async deleteConversation(id: string) {
+    await gql(`mutation($id:ID!){ deleteConversation(id:$id){ success } }`, { id });
   },
 
   async search(query: string, limit = 8, filters?: Filters) {

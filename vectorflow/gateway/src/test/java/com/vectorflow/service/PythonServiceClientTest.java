@@ -124,7 +124,7 @@ class PythonServiceClientTest {
                 + "event: delta\ndata: {\"text\": \"Hi\"}\n\n"
                 + "event: done\ndata: {\"confidence\": 0.9, \"sources\": []}\n\n";
         contentType = "text/event-stream";
-        var events = client("k").askStream("q", 3, null).collectList().block();
+        var events = client("k").askStream("q", 3, null, null).collectList().block();
         assertThat(events).extracting(e -> e.event()).containsExactly("sources", "delta", "done");
         assertThat(events.get(1).data()).isEqualTo("{\"text\": \"Hi\"}");
         assertThat(seenKey.get()).isEqualTo("k");
@@ -134,7 +134,7 @@ class PythonServiceClientTest {
     void askStreamTurnsHttpErrorsIntoErrorEvent() {
         status = 422;
         body = "{\"detail\":[{\"loc\":[\"body\",\"question\"],\"msg\":\"too long\"}]}";
-        var events = client("").askStream("q", 3, null).collectList().block();
+        var events = client("").askStream("q", 3, null, null).collectList().block();
         assertThat(events).hasSize(1);
         assertThat(events.get(0).event()).isEqualTo("error");
         assertThat(events.get(0).data()).contains("Invalid question: too long");
@@ -154,7 +154,7 @@ class PythonServiceClientTest {
         PythonServiceClient c = new PythonServiceClient(WebClient.builder(), "http://127.0.0.1:1", "",
                 Duration.ofSeconds(1), Duration.ofSeconds(1), false);
         assertThatThrownBy(() -> c.search("q", 5, null, null)).hasMessageContaining("unavailable");
-        var events = c.askStream("q", 3, null).collectList().block();
+        var events = c.askStream("q", 3, null, null).collectList().block();
         assertThat(events.get(0).data()).contains("unavailable");
         assertThat(c.healthCheck()).isFalse();
     }

@@ -2,10 +2,10 @@
 
 # VectorFlow
 
-**Ask questions about your documents and get AI answers you can verify.**
+**A ChatGPT-style assistant for your own documents, with answers you can verify.**
 
-A retrieval-augmented generation (RAG) platform: upload PDFs and Word files, ask in plain language,
-and get answers that stream in word by word with clickable citations to the exact source passages.
+Upload PDFs and Word files, then chat: answers stream in word by word, remember the conversation,
+render as rich Markdown, and cite the exact source passages they came from.
 
 [![CI](https://github.com/kcharithreddy/vectorflow/actions/workflows/ci.yml/badge.svg)](https://github.com/kcharithreddy/vectorflow/actions/workflows/ci.yml)
 ![Java 17](https://img.shields.io/badge/Java-17-orange)
@@ -13,16 +13,19 @@ and get answers that stream in word by word with clickable citations to the exac
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-3776ab)
 ![React 18](https://img.shields.io/badge/React-18-61dafb)
 ![Qdrant](https://img.shields.io/badge/Vector%20DB-Qdrant-dc244c)
-![Tests](https://img.shields.io/badge/tests-120%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-133%20passing-brightgreen)
 
-<img src="docs/images/demo.gif" alt="VectorFlow demo: sign in, ask a question, the answer streams in with a clickable citation" width="860">
+<img src="docs/images/demo.gif" alt="VectorFlow demo: a conversation with streamed, cited answers, a follow-up question and a formatted Markdown answer" width="860">
 
-<sub>UI demo: sign in → ask → answer streams in → click the [1] citation to see the source.</sub>
+<sub>UI demo: ask → answer streams in with a citation → follow-up question uses the conversation → formatted answer with a list and code block.</sub>
 
 </div>
 
 ## ✨ Highlights
 
+- **ChatGPT-style conversations**: saved chat history (grouped by date), rename/delete, new chat, Stop / Copy / Regenerate
+- **Memory for follow-ups**: "can I carry *them* over?" is rewritten into a standalone query before retrieval, and recent turns are sent to the model
+- **Rich answers**: safe Markdown rendering (lists, bold, code blocks with copy) with clickable [1] citations inside
 - **Grounded answers with citations**: every answer cites numbered sources; click [1] to jump to the passage
 - **Streaming responses**: tokens flow from OpenAI → Python → Spring gateway → browser via Server-Sent Events
 - **Honest when it doesn't know**: a relevance threshold skips the LLM for off-topic questions (no hallucination, no cost)
@@ -30,12 +33,13 @@ and get answers that stream in word by word with clickable citations to the exac
 - **Microservices**: Spring Boot GraphQL gateway + FastAPI AI service + React app, 6 containers with Docker Compose
 - **Security in depth**: JWT + roles, login lockout, per-user rate limits, GraphQL depth limits, CSP and security headers, audit log ([SECURITY.md](SECURITY.md))
 - **Measured quality**: an evaluation suite scores 100% retrieval hit@1 and 100% off-topic honesty on its benchmark ([results](#-evaluation))
-- **120 automated tests** (64 Python, 56 Java) + browser end-to-end tests, CI on every push, Dependabot
+- **133 automated tests** (69 Python, 64 Java) + browser end-to-end tests, CI on every push, Dependabot
+- **Versioned database migrations** with Flyway (existing databases upgrade in place)
 
 <table>
 <tr>
 <td width="50%"><img src="docs/images/real-openai-answer.png" alt="Real OpenAI answer with a citation"><br><sub><b>Real gpt-4o-mini answer</b> from an uploaded story, citing its source with 84% confidence.</sub></td>
-<td width="50%"><img src="docs/images/upload-dialog.png" alt="Upload dialog"><br><sub><b>Drag-and-drop upload</b>: title from the file name, optional category and tags.</sub></td>
+<td width="50%"><img src="docs/images/formatted-answer.png" alt="Formatted answer with chat history"><br><sub><b>Chat history + rich answers</b>: Markdown lists, bold and code blocks, each fact cited.</sub></td>
 </tr>
 </table>
 
@@ -530,9 +534,12 @@ query {
 }
 ```
 
-**Streaming answers** (what the web app uses): `POST /api/ask/stream` returns Server-Sent Events:
-`sources` (retrieved passages), then many `delta` events (answer text as it is generated), then `done`
-(confidence and the sources to display). Errors arrive as an `error` event.
+**Streaming chat** (what the web app uses): `POST /api/ask/stream` returns Server-Sent Events:
+`conversation` (id + title), `sources` (retrieved passages), many `delta` events (answer text as it is
+generated), then `done` (confidence and the sources to display). Errors arrive as an `error` event.
+Pass `conversationId` to continue a chat (the recent history is used to understand follow-ups), or
+`"regenerate": true` to replace the last answer. Every turn is saved to the user's chat history; if the
+client stops early, the partial answer is saved.
 ```bash
 curl -N -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
      -d '{"question":"How many vacation days do we get?","maxSources":5}' \
@@ -554,6 +561,14 @@ query {
 
 The answer cites sources by number (`[1]`, `[2]`) matching the order of `sources`.
 `confidence` is the model's mean token probability (or a heuristic for models without logprobs).
+
+**Chat history** (only ever your own conversations):
+```graphql
+query { conversations(limit: 20) { id title updatedAt } }
+query { conversation(id: "uuid") { title messages { role content confidence sources { title } } } }
+mutation { renameConversation(id: "uuid", title: "Leave policy") { id title } }
+mutation { deleteConversation(id: "uuid") { success } }
+```
 
 **Current user:**
 ```graphql
@@ -603,7 +618,7 @@ vectorflow/
 │       │   ├── repository/     # Spring Data JPA repositories
 │       │   ├── security/       # JWT provider + filter, GraphQlAuthGuard
 │       │   └── service/        # AuthService, DocumentService, PythonServiceClient, validation
-│       ├── main/resources/     # application.yml, graphql/schema.graphqls
+│       ├── main/resources/     # application.yml, graphql/schema.graphqls, db/migration (Flyway)
 │       └── test/java/...       # Unit tests (JUnit 5 + Mockito)
 │
 ├── python-service/             # FastAPI AI/ML service
@@ -743,6 +758,8 @@ overlapping documents is the next step.
 | **GraphQL over REST** | Flexible queries, strong typing, single endpoint, introspection |
 | **Microservices (Java + Python)** | Java for enterprise patterns (security, caching); Python for the AI/ML ecosystem |
 | **Qdrant** | Open-source, self-hostable, excellent payload filtering, Rust performance |
+| **Flyway migrations** | Schema changes are versioned; existing databases are baselined and upgraded in place |
+| **Query rewriting for follow-ups** | Retrieval only sees the search query, so "and them?" is rewritten into a standalone question first |
 | **Gateway-assigned document ids** | Postgres row and Qdrant chunks always share one id; row tracks processing → completed/failed |
 | **Deterministic chunk ids** | `uuid5(document_id, chunk_index)` makes re-ingestion idempotent |
 | **text-embedding-3-small** | Cheaper and better than ada-002 at the same 1536 dimensions |

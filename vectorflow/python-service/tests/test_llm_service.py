@@ -161,7 +161,7 @@ def test_stream_endpoint_sse_format(client):
     from services.llm_service import get_llm_service
 
     class StubLLM:
-        async def ask_stream_async(self, question, max_sources, filters):
+        async def ask_stream_async(self, question, max_sources, filters, **kwargs):
             yield {"event": "sources", "data": {"sources": []}}
             yield {"event": "delta", "data": {"text": "Hello"}}
             yield {"event": "done", "data": {"confidence": 0.9, "sources": []}}
@@ -179,7 +179,7 @@ def test_stream_endpoint_reports_errors_as_events(client):
     from services.llm_service import get_llm_service
 
     class FailingLLM:
-        async def ask_stream_async(self, question, max_sources, filters):
+        async def ask_stream_async(self, question, max_sources, filters, **kwargs):
             yield {"event": "sources", "data": {"sources": []}}
             raise RuntimeError("boom")
 
@@ -190,3 +190,88 @@ def test_stream_endpoint_reports_errors_as_events(client):
 
 def test_stream_endpoint_validates_input(client):
     assert client.post("/api/ask/stream", json={"question": "  "}).status_code == 422
+
+
+class RecordingChat:
+    """Answers the rewrite call with a standalone query and records every request."""
+
+    def __init__(self, rewrite="How many vacation days can be carried over?", fail_rewrite=False):
+        self.rewrite = rewrite
+        self.fail_rewrite = fail_rewrite
+        self.calls = []
+
+    async def create(self, **kwargs):
+        self.calls.append(kwargs)
+        is_rewrite = kwargs["messages"][0]["content"].startswith("Rewrite the user's latest message")
+        if is_rewrite:
+            if self.fail_rewrite:
+                raise RuntimeError("rewrite model down")
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=f'"{self.rewrite}"'), logprobs=None)])
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="Up to three months [1]."), logprobs=None)])
+
+
+HISTORY = [
+    {"role": "user", "content": "How many vacation days do employees get?"},
+    {"role": "assistant", "content": "Employees get twenty days per year [1]."},
+]
+
+
+class SpyEmbeddings:
+    def __init__(self, inner):
+        self.inner, self.queries = inner, []
+
+    async def generate_embedding_async(self, text):
+        self.queries.append(text)
+        return await self.inner.generate_embedding_async(text)
+
+
+async def test_follow_up_is_rewritten_for_retrieval_and_history_sent_to_model(settings, embedding_service, fake_qdrant):
+    fake_qdrant.search_results = [{"id": "1", "score": 0.6, "document_id": "d", "title": "Leave Policy", "text": "Carry over up to three months."}]
+    chat = RecordingChat()
+    spy = SpyEmbeddings(embedding_service)
+    svc = make_service(settings, spy, fake_qdrant, chat)
+    result = await svc.ask_async("And can I carry them over?", history=HISTORY)
+
+    assert spy.queries == ["How many vacation days can be carried over?"]  # retrieval used the rewrite
+    answer_call = chat.calls[-1]
+    roles = [m["role"] for m in answer_call["messages"]]
+    assert roles == ["system", "user", "assistant", "user"]               # history included
+    assert answer_call["messages"][-1]["content"].endswith("Question: And can I carry them over?")
+    assert result["answer"] == "Up to three months [1]."
+
+
+async def test_no_history_means_no_rewrite_call(settings, embedding_service, fake_qdrant):
+    chat = RecordingChat()
+    svc = make_service(settings, embedding_service, fake_qdrant, chat)
+    assert await svc.standalone_question("What is a pod?", []) == "What is a pod?"
+    assert chat.calls == []
+
+
+async def test_rewrite_failure_falls_back_to_original_question(settings, embedding_service, fake_qdrant):
+    svc = make_service(settings, embedding_service, fake_qdrant, RecordingChat(fail_rewrite=True))
+    assert await svc.standalone_question("And them?", HISTORY) == "And them?"
+
+
+async def test_stream_uses_history_too(settings, embedding_service, fake_qdrant):
+    fake_qdrant.search_results = [{"id": "1", "score": 0.6, "document_id": "d", "title": "T", "text": "x"}]
+
+    class Chat(RecordingChat):
+        async def create(self, **kwargs):
+            if kwargs.get("stream"):
+                self.calls.append(kwargs)
+                return await FakeStreamChat(["Yes [1]."]).create(**kwargs)
+            return await super().create(**kwargs)
+
+    chat = Chat()
+    spy = SpyEmbeddings(embedding_service)
+    svc = make_service(settings, spy, fake_qdrant, chat)
+    events = await collect(svc.ask_stream_async("And them?", history=HISTORY))
+    assert spy.queries == ["How many vacation days can be carried over?"]
+    assert [m["role"] for m in chat.calls[-1]["messages"]] == ["system", "user", "assistant", "user"]
+    assert events[-1]["event"] == "done"
+
+
+def test_history_validation(client):
+    ok = {"question": "q", "history": [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]}
+    assert client.post("/api/ask", json={**ok, "history": [{"role": "system", "content": "x"}]}).status_code == 422
+    assert client.post("/api/ask", json={**ok, "history": [{"role": "user", "content": "x"}] * 21}).status_code == 422

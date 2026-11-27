@@ -36,6 +36,7 @@ async def ask_question(
             question=request.question,
             max_sources=request.max_sources,
             filters=filters_to_dict(request.filters),
+            history=[m.model_dump() for m in request.history],
         )
     except Exception as exc:
         err = to_vectorflow_error(exc, LLMError())
@@ -72,6 +73,7 @@ async def ask_question_stream(
                 question=request.question,
                 max_sources=request.max_sources,
                 filters=filters_to_dict(request.filters),
+                history=[m.model_dump() for m in request.history],
             ):
                 yield _sse(item["event"], item["data"])
         except Exception as exc:

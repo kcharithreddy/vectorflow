@@ -1,58 +1,125 @@
-import { Fragment, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
-import { api, type AskResult, type SearchHit } from "../api";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { api, type AskResult, type ConversationEvent, type SearchHit } from "../api";
+import Markdown from "./Markdown";
 
 type Mode = "ask" | "search";
 
 type Message =
   | { id: number; role: "user"; text: string; mode: Mode }
-  | { id: number; role: "answer"; result: AskResult; streaming?: boolean }
+  | { id: number; role: "answer"; result: AskResult; streaming?: boolean; stopped?: boolean }
   | { id: number; role: "results"; hits: SearchHit[]; query: string }
   | { id: number; role: "error"; text: string };
 
 interface Props {
   canEdit: boolean;
+  /** Conversation to show; null = a new, empty chat. */
+  conversationId: string | null;
+  /** Called when the server creates/continues a conversation for a message we sent. */
+  onConversation: (c: ConversationEvent) => void;
   onError: (err: unknown) => string;
 }
 
-const EXAMPLES = ["Summarize the main ideas in my documents", "What is a vector database?", "How do JWT tokens work?"];
+const EXAMPLES = ["Summarize the main ideas in my documents", "What are the key points I should know?", "Explain this topic simply"];
 
 let nextId = 1;
 
-export default function ChatPanel({ canEdit, onError }: Props) {
+export default function ChatPanel({ canEdit, conversationId, onConversation, onError }: Props) {
   const [mode, setMode] = useState<Mode>("ask");
   const [input, setInput] = useState("");
   const [category, setCategory] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  // The conversation this panel is already showing (so selecting it again doesn't reload mid-stream).
+  const shownConversation = useRef<string | null>(null);
+
+  // Load a conversation's history when the selection changes.
+  useEffect(() => {
+    if (conversationId === shownConversation.current) return;
+    abortRef.current?.abort();
+    shownConversation.current = conversationId;
+    setMessages([]);
+    if (!conversationId) return;
+    let cancelled = false;
+    setLoading(true);
+    api
+      .conversationMessages(conversationId)
+      .then((c) => {
+        if (cancelled || !c) return;
+        setMessages(
+          c.messages.map((m) =>
+            m.role === "user"
+              ? { id: nextId++, role: "user", text: m.content, mode: "ask" as Mode }
+              : { id: nextId++, role: "answer", result: { answer: m.content, confidence: m.confidence ?? 0, sources: m.sources } },
+          ),
+        );
+      })
+      .catch((err) => !cancelled && setMessages([{ id: nextId++, role: "error", text: onError(err) }]))
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId, onError]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, busy]);
 
+  // Grow the textarea with its content (up to the CSS max-height).
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [input]);
+
+  async function streamAnswer(question: string, regenerate = false) {
+    const filters = category.trim() ? { category: category.trim() } : undefined;
+    const id = nextId++;
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setMessages((m) => [...m, { id, role: "answer", streaming: true, result: { answer: "", confidence: 0, sources: [] } }]);
+    const update = (fn: (msg: Extract<Message, { role: "answer" }>) => Partial<Extract<Message, { role: "answer" }>>) =>
+      setMessages((m) => m.map((msg) => (msg.id === id && msg.role === "answer" ? { ...msg, ...fn(msg) } : msg)));
+    try {
+      const final = await api.askStream(question, (text) => update((msg) => ({ result: { ...msg.result, answer: msg.result.answer + text } })), {
+        filters,
+        signal: controller.signal,
+        conversationId: shownConversation.current,
+        regenerate,
+        onConversation: (c) => {
+          shownConversation.current = c.id;
+          onConversation(c);
+        },
+      });
+      update(() => ({ result: final, streaming: false }));
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        update(() => ({ streaming: false, stopped: true }));
+        return;
+      }
+      setMessages((m) => m.filter((msg) => msg.id !== id || (msg.role === "answer" && msg.result.answer)));
+      update(() => ({ streaming: false }));
+      throw err;
+    } finally {
+      abortRef.current = null;
+    }
+  }
+
   async function send(text: string) {
     const q = text.trim();
     if (!q || busy) return;
-    const filters = category.trim() ? { category: category.trim() } : undefined;
     setMessages((m) => [...m, { id: nextId++, role: "user", text: q, mode }]);
     setInput("");
     setBusy(true);
     try {
       if (mode === "ask") {
-        // Stream the answer: show text as it arrives, sources/confidence at the end.
-        const id = nextId++;
-        setMessages((m) => [...m, { id, role: "answer", streaming: true, result: { answer: "", confidence: 0, sources: [] } }]);
-        const update = (fn: (r: AskResult) => AskResult, streaming = true) =>
-          setMessages((m) => m.map((msg) => (msg.id === id && msg.role === "answer" ? { ...msg, streaming, result: fn(msg.result) } : msg)));
-        try {
-          const final = await api.askStream(q, (text) => update((r) => ({ ...r, answer: r.answer + text })), { filters });
-          update(() => final, false);
-        } catch (err) {
-          setMessages((m) => m.filter((msg) => msg.id !== id || (msg.role === "answer" && msg.result.answer)));
-          update((r) => r, false);
-          throw err;
-        }
+        await streamAnswer(q);
       } else {
+        const filters = category.trim() ? { category: category.trim() } : undefined;
         const hits = await api.search(q, 8, filters);
         setMessages((m) => [...m, { id: nextId++, role: "results", hits, query: q }]);
       }
@@ -61,6 +128,27 @@ export default function ChatPanel({ canEdit, onError }: Props) {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function regenerate() {
+    if (busy || !shownConversation.current) return;
+    // Drop the last answer locally; the server drops it from the history too.
+    setMessages((m) => {
+      const last = m.length - 1;
+      return last >= 0 && m[last].role === "answer" ? m.slice(0, last) : m;
+    });
+    setBusy(true);
+    try {
+      await streamAnswer("", true);
+    } catch (err) {
+      setMessages((m) => [...m, { id: nextId++, role: "error", text: onError(err) }]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function stop() {
+    abortRef.current?.abort();
   }
 
   function onSubmit(e: FormEvent) {
@@ -75,15 +163,21 @@ export default function ChatPanel({ canEdit, onError }: Props) {
     }
   }
 
+  const lastAnswerId = [...messages].reverse().find((m) => m.role === "answer")?.id;
+  const streaming = busy && messages.length > 0 && messages[messages.length - 1].role === "answer";
+
   return (
     <div className="chat">
       <div className="chat-scroll">
-        {messages.length === 0 ? (
+        {loading ? (
+          <p className="muted center">Loading conversation…</p>
+        ) : messages.length === 0 ? (
           <div className="welcome">
-            <h1>Ask your documents anything</h1>
+            <h1>What would you like to know?</h1>
             <p className="muted">
-              Answers are generated only from your ingested documents and cite their sources like <span className="cite static">1</span>.
-              {canEdit ? " Add documents from the panel on the left." : ""}
+              Ask about your documents. Answers stream in, cite their sources like <span className="cite static">1</span>, and remember the
+              conversation, so you can ask follow-up questions.
+              {canEdit ? " Add documents from the Documents tab." : ""}
             </p>
             <div className="examples">
               {EXAMPLES.map((ex) => (
@@ -94,9 +188,16 @@ export default function ChatPanel({ canEdit, onError }: Props) {
             </div>
           </div>
         ) : (
-          messages.map((m) => <MessageView key={m.id} message={m} />)
+          messages.map((m) => (
+            <MessageView
+              key={m.id}
+              message={m}
+              canRegenerate={m.id === lastAnswerId && !busy && !!shownConversation.current}
+              onRegenerate={regenerate}
+            />
+          ))
         )}
-        {busy && !(messages.length && messages[messages.length - 1].role === "answer") && (
+        {busy && !streaming && (
           <div className="msg assistant">
             <div className="bubble typing" aria-label="Thinking">
               <span />
@@ -122,23 +223,31 @@ export default function ChatPanel({ canEdit, onError }: Props) {
         </div>
         <div className="composer-row">
           <textarea
+            ref={textareaRef}
             rows={1}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder={mode === "ask" ? "Ask a question about your documents…" : "Search your documents…"}
+            placeholder={mode === "ask" ? "Message VectorFlow…" : "Search your documents…"}
             aria-label="Message"
           />
-          <button className="btn primary" type="submit" disabled={busy || !input.trim()}>
-            {mode === "ask" ? "Ask" : "Search"}
-          </button>
+          {streaming ? (
+            <button className="btn stop" type="button" onClick={stop} aria-label="Stop generating">
+              ■ Stop
+            </button>
+          ) : (
+            <button className="btn primary" type="submit" disabled={busy || !input.trim()}>
+              {mode === "ask" ? "Send" : "Search"}
+            </button>
+          )}
         </div>
+        <p className="hint center">Enter to send · Shift+Enter for a new line · Answers come only from your documents</p>
       </form>
     </div>
   );
 }
 
-function MessageView({ message }: { message: Message }) {
+function MessageView({ message, canRegenerate, onRegenerate }: { message: Message; canRegenerate: boolean; onRegenerate: () => void }) {
   switch (message.role) {
     case "user":
       return (
@@ -156,7 +265,16 @@ function MessageView({ message }: { message: Message }) {
         </div>
       );
     case "answer":
-      return <AnswerView id={message.id} result={message.result} streaming={!!message.streaming} />;
+      return (
+        <AnswerView
+          id={message.id}
+          result={message.result}
+          streaming={!!message.streaming}
+          stopped={!!message.stopped}
+          canRegenerate={canRegenerate}
+          onRegenerate={onRegenerate}
+        />
+      );
     case "results":
       return (
         <div className="msg assistant">
@@ -188,14 +306,39 @@ function MessageView({ message }: { message: Message }) {
   }
 }
 
-function AnswerView({ id, result, streaming }: { id: number; result: AskResult; streaming: boolean }) {
+function AnswerView({
+  id,
+  result,
+  streaming,
+  stopped,
+  canRegenerate,
+  onRegenerate,
+}: {
+  id: number;
+  result: AskResult;
+  streaming: boolean;
+  stopped: boolean;
+  canRegenerate: boolean;
+  onRegenerate: () => void;
+}) {
   const [highlight, setHighlight] = useState<number | null>(null);
+  const [copied, setCopied] = useState(false);
   const sourceId = (n: number) => `src-${id}-${n}`;
 
   function focusSource(n: number) {
     setHighlight(n);
     document.getElementById(sourceId(n))?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     window.setTimeout(() => setHighlight(null), 1600);
+  }
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(result.answer.replace(/\s*\[\d+\]/g, ""));
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard unavailable */
+    }
   }
 
   // Sources the answer actually cites come first; the rest are tucked away.
@@ -219,8 +362,9 @@ function AnswerView({ id, result, streaming }: { id: number; result: AskResult; 
     <div className="msg assistant">
       <div className="bubble wide">
         <div className="answer">
-          {renderWithCitations(result.answer, result.sources.length, focusSource)}
+          <Markdown text={result.answer} sourceCount={result.sources.length} onCite={focusSource} />
           {streaming && <span className="cursor" aria-hidden />}
+          {stopped && <p className="muted small stopped">Stopped</p>}
         </div>
         {!streaming && result.sources.length > 0 && (
           <>
@@ -240,6 +384,18 @@ function AnswerView({ id, result, streaming }: { id: number; result: AskResult; 
             )}
           </>
         )}
+        {!streaming && result.answer && (
+          <div className="answer-actions">
+            <button type="button" className="action" onClick={copy}>
+              {copied ? "✓ Copied" : "Copy"}
+            </button>
+            {canRegenerate && (
+              <button type="button" className="action" onClick={onRegenerate}>
+                ↻ Regenerate
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -252,25 +408,6 @@ function citedNumbers(text: string, sourceCount: number): Set<number> {
     if (n >= 1 && n <= sourceCount) found.add(n);
   }
   return found;
-}
-
-/** Turn "[1]" / "[2][3]" markers in the answer into clickable citation chips. */
-function renderWithCitations(text: string, sourceCount: number, onCite: (n: number) => void): ReactNode {
-  const parts = text.split(/(\[\d+\])/g);
-  return parts.map((part, i) => {
-    const m = /^\[(\d+)\]$/.exec(part);
-    if (m) {
-      const n = Number(m[1]);
-      if (n >= 1 && n <= sourceCount) {
-        return (
-          <button key={i} className="cite" onClick={() => onCite(n)} aria-label={`Show source ${n}`}>
-            {n}
-          </button>
-        );
-      }
-    }
-    return <Fragment key={i}>{part}</Fragment>;
-  });
 }
 
 function Meter({ value }: { value: number }) {
