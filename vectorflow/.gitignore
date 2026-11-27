@@ -49,3 +49,6 @@ htmlcov/
 *.so
 *.dylib
 
+
+# TypeScript incremental build cache
+*.tsbuildinfo
