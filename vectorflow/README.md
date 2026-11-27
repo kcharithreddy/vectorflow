@@ -29,6 +29,7 @@ and get answers that stream in word by word with clickable citations to the exac
 - **Upload PDF, DOCX, Markdown and text** with drag-and-drop; content-signature checks reject disguised files
 - **Microservices**: Spring Boot GraphQL gateway + FastAPI AI service + React app, 6 containers with Docker Compose
 - **Security in depth**: JWT + roles, login lockout, per-user rate limits, GraphQL depth limits, CSP and security headers, audit log ([SECURITY.md](SECURITY.md))
+- **Measured quality**: an evaluation suite scores 100% retrieval hit@1 and 100% off-topic honesty on its benchmark ([results](#-evaluation))
 - **120 automated tests** (64 Python, 56 Java) + browser end-to-end tests, CI on every push, Dependabot
 
 <table>
@@ -722,6 +723,16 @@ python3 eval/run_eval.py      # writes eval/results/latest.md
 
 It uses its own tagged documents, so it never touches your data. Use it to compare chunk sizes, thresholds,
 prompts and models with numbers instead of guesses.
+
+**Latest results** (text-embedding-3-small + gpt-4o-mini, 27 Nov 2026):
+
+| Retrieval hit@1 | Retrieval MRR | Fully correct answers | Correct source cited | Off-topic declined | Ask latency p50 / p95 |
+|---|---|---|---|---|---|
+| **100%** (26/26) | **1.00** | **100%** | **100%** | **100%** (6/6) | 1.5 s / 3.6 s |
+
+Average confidence was 0.95 on answerable questions and 0.00 on off-topic ones. The benchmark is deliberately
+small (8 documents on distinct topics); it verifies the pipeline end to end. A larger, harder question set with
+overlapping documents is the next step.
 
 ---
 
